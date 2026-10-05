@@ -1,11 +1,12 @@
-const ils = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 });
-const ils2 = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// signDisplay 'negative': no "-0" for -0 or a small negative that rounds to zero
+const ils = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0, signDisplay: 'negative' });
+const ils2 = new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'negative' });
 
 export const money = (n: number | null | undefined, cents = false) => (n == null ? '—' : (cents ? ils2 : ils).format(n));
 
 export function moneyIn(n: number, currency: string): string {
   try {
-    return new Intl.NumberFormat('he-IL', { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
+    return new Intl.NumberFormat('he-IL', { style: 'currency', currency, maximumFractionDigits: 0, signDisplay: 'negative' }).format(n);
   } catch {
     return `${Math.round(n).toLocaleString('he-IL')} ${currency}`;
   }

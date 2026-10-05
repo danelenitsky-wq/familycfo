@@ -77,10 +77,10 @@ export function Stat({ label, value, hint, tone, icon: Icon, color, spark, delta
         {Icon && <span className="icon-tile -mt-0.5 h-8 w-8" style={{ ['--tile' as string]: tile }}><Icon /></span>}
       </div>
       <div className="relative mt-1.5 flex items-end justify-between gap-3">
-        <div className={cn('min-w-0 text-xl font-bold leading-7 tracking-tight sm:text-[1.625rem] sm:leading-8', tone && TONE_TEXT[tone])}>
+        <div className={cn('shrink-0 text-xl font-bold leading-7 tracking-tight sm:text-[1.625rem] sm:leading-8', tone && TONE_TEXT[tone])}>
           {typeof value === 'number' ? (format ? <AnimatedNumber value={value} format={format} className="num" /> : <Money value={value} animated />) : value}
         </div>
-        {spark && spark.length > 1 && <Sparkline data={spark} color={tile} className="-mb-0.5 h-9 w-16 shrink-0 sm:w-24" />}
+        {spark && spark.length > 1 && <Sparkline data={spark} color={tile} className="-mb-0.5 h-9 min-w-0 max-w-24 flex-1" />}
       </div>
       <div className="relative mt-auto pt-2">
         <div className="min-w-0 text-xs leading-relaxed text-fg-subtle">

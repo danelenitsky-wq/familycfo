@@ -264,7 +264,7 @@ export interface Holding {
   notes: string | null; exchange: string | null; instrumentType: string | null;
   buyPrice: number | null; buyDate: string | null; baselinePrice: number | null; baselineDate: string | null;
   manualPrice: number | null; manualPriceDate: string | null;
-  price: number | null; priceSource: 'quote' | 'manual' | 'none'; priceAsOf: string | null; previousClose: number | null; quoteError: string | null;
+  price: number | null; priceSource: 'quote' | 'manual' | 'cost' | 'none'; priceAsOf: string | null; previousClose: number | null; quoteError: string | null;
   rate: number; value: number; valueIls: number;
   basis: 'buy' | 'baseline' | null; basisDate: string | null; cost: number | null; costIls: number | null;
   gain: number | null; gainPct: number | null; gainIls: number | null; gainIlsPct: number | null;

@@ -83,7 +83,10 @@ export function summarizeCycle(txs: Tx[], cycle: Cycle): CycleSummary {
 
 export function cashflowHistory(db: DB, opts: TxFilter & { cycles?: number; asOf?: string } = {}): CycleSummary[] {
   const txs = filterTx(loadTransactions(db), opts);
-  return recentCycles(opts.asOf ?? today(), opts.cycles ?? 6, cycleStartDay(db)).map(c => summarizeCycle(txs, c));
+  const all = recentCycles(opts.asOf ?? today(), opts.cycles ?? 6, cycleStartDay(db)).map(c => summarizeCycle(txs, c));
+  // cycles from before the data starts aren't months with zero spend — leave them out (the current cycle always stays)
+  const first = all.findIndex(h => h.txCount > 0);
+  return all.slice(first === -1 ? -1 : Math.min(first, all.length - 1));
 }
 
 export function cycleSummary(db: DB, key: string | undefined, filter: TxFilter = {}): CycleSummary {

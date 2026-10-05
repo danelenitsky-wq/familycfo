@@ -26,7 +26,8 @@ export interface HoldingValue {
   manualPriceDate: string | null;
   /** price per unit now (quote currency) */
   price: number | null;
-  priceSource: 'quote' | 'manual' | 'none';
+  /** 'cost': never priced (e.g. Yahoo unreachable on the first fetch) — valued at the buy / baseline price, no gain */
+  priceSource: 'quote' | 'manual' | 'cost' | 'none';
   priceAsOf: string | null;
   previousClose: number | null;
   quoteError: string | null;
@@ -83,10 +84,11 @@ export function valueHolding(db: DB, h: Row, asOf = today()): HoldingValue {
   const price: number | null = manual ? h.manual_price : h.quote_price ?? null;
   const currency: string = (manual ? h.currency : h.quote_currency ?? h.currency) ?? 'ILS';
   const rate = rateToIls(db, currency, asOf) ?? 1;
-  const value = (price ?? 0) * h.quantity;
 
   const basis = h.buy_price != null ? 'buy' : h.baseline_price != null ? 'baseline' : null;
   const basisPrice: number | null = h.buy_price ?? h.baseline_price ?? null;
+  // a holding that was never priced is worth what it cost rather than nothing, so net worth doesn't drop
+  const value = (price ?? basisPrice ?? 0) * h.quantity;
   const basisDate: string | null = basis === 'buy' ? h.buy_date ?? null : basis === 'baseline' ? h.baseline_date ?? null : null;
   const cost = basisPrice == null ? null : basisPrice * h.quantity;
   // the cost in ILS at that day's rate — so the ILS gain includes what the exchange rate did
@@ -105,7 +107,7 @@ export function valueHolding(db: DB, h: Row, asOf = today()): HoldingValue {
     exchange: h.exchange ?? null, instrumentType: manual ? null : h.instrument_type ?? null,
     buyPrice: h.buy_price ?? null, buyDate: h.buy_date ?? null, baselinePrice: h.baseline_price ?? null, baselineDate: h.baseline_date ?? null,
     manualPrice: h.manual_price ?? null, manualPriceDate: h.manual_price_date ?? null,
-    price, priceSource: manual ? 'manual' : price != null ? 'quote' : 'none',
+    price, priceSource: manual ? 'manual' : price != null ? 'quote' : basisPrice != null ? 'cost' : 'none',
     priceAsOf: manual ? h.manual_price_date ?? null : h.market_time ?? null,
     previousClose: prev, quoteError: manual ? null : h.quote_error ?? null,
     rate, value: round(value), valueIls: round(valueIls),
@@ -126,8 +128,10 @@ export function portfolio(db: DB, asOf = today()): Portfolio {
   const holdings = rows.map(h => valueHolding(db, h, asOf));
   const priced = holdings.filter(h => h.price != null);
   const withCost = priced.filter(h => h.costIls != null);
-  const valueIls = priced.reduce((s, h) => s + h.valueIls, 0);
-  const costIls = withCost.reduce((s, h) => s + h.costIls!, 0);
+  const valueIls = holdings.reduce((s, h) => s + h.valueIls, 0);
+  // the cost includes holdings valued at cost; the gain (and its %) only the priced ones
+  const costIls = holdings.reduce((s, h) => s + (h.costIls ?? 0), 0);
+  const pricedCostIls = withCost.reduce((s, h) => s + h.costIls!, 0);
   const gainIls = withCost.reduce((s, h) => s + h.gainIls!, 0);
   const dayChangeIls = holdings.reduce((s, h) => s + h.dayChangeIls, 0);
   const sumBy = (key: (h: HoldingValue) => string) => holdings.reduce<Record<string, number>>((acc, h) => {
@@ -150,7 +154,7 @@ export function portfolio(db: DB, asOf = today()): Portfolio {
       valueIls: round(valueIls),
       costIls: round(costIls),
       gainIls: round(gainIls),
-      gainPct: costIls ? round((gainIls / costIls) * 100) : null,
+      gainPct: pricedCostIls ? round((gainIls / pricedCostIls) * 100) : null,
       dayChangeIls: round(dayChangeIls),
       dayChangePct: valueIls - dayChangeIls ? round((dayChangeIls / (valueIls - dayChangeIls)) * 100) : null,
       quotesAsOf: fetched.at(-1) ?? null,
