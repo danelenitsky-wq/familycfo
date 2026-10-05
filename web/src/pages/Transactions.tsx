@@ -6,8 +6,8 @@ import {
   MoreHorizontal, PenLine, PieChart, PiggyBank, Plus, Receipt, Scale, ShoppingBag, TrendingUp, Undo2, X,
 } from 'lucide-react';
 import { api, qs, type Tx } from '../api';
-import { useFilters, useLookups } from '../state';
-import { day, KIND_LABELS, monthName, todayIso } from '../format';
+import { useFilters, useLookups, usePeriod } from '../state';
+import { day, KIND_LABELS, monthName, periodName } from '../format';
 import {
   AccountSelect, AnimatedNumber, BusinessSelect, CategorySelect, Empty, ErrorBox, Field, Loading, MemberSelect, Modal, Money,
   NewTagInput, PageHeader, Picker, Stat, TagPicker, type PickerOption,
@@ -26,14 +26,8 @@ const KIND_ICONS: Record<string, ReactNode> = {
 const kindOptions = (): PickerOption[] => Object.entries(KIND_LABELS).map(([k, v]) => ({ value: k, label: v, icon: KIND_ICONS[k] }));
 const formatCount = (n: number) => Math.round(n).toLocaleString('he-IL');
 
-function cycleOptions(n = 12): string[] {
-  const d = new Date(`${todayIso().slice(0, 7)}-01T12:00:00`);
-  return Array.from({ length: n }, (_, i) => {
-    const x = new Date(d);
-    x.setMonth(d.getMonth() - i + 1);
-    return x.toISOString().slice(0, 7);
-  });
-}
+/** Picker value for the whole period (not a cycle key). */
+const PERIOD = '__period';
 
 export default function Transactions() {
   const { params } = useFilters();
@@ -41,7 +35,10 @@ export default function Transactions() {
   const qc = useQueryClient();
   // filters can arrive in the URL (e.g. clicking a category on the dashboard)
   const [urlParams, setUrlParams] = useSearchParams();
-  const [cycle, setCycle] = useState(urlParams.get('cycle') ?? todayIso().slice(0, 7));
+  // the app's period (a month, or all of it), unless a link asked for another cycle ('' = no time limit)
+  const period = usePeriod();
+  const [cycleOverride, setCycleOverride] = useState<string | null>(urlParams.get('cycle'));
+  const cycle = cycleOverride ?? period.cycleParam;
   const [search, setSearch] = useState(urlParams.get('search') ?? '');
   const [category, setCategory] = useState<number | null>(urlParams.get('category') ? Number(urlParams.get('category')) : null);
   const [account, setAccount] = useState<string | null>(urlParams.get('account'));
@@ -53,7 +50,7 @@ export default function Transactions() {
   // keep the URL in sync so the filtered view can be bookmarked or opened again with Back
   useEffect(() => {
     const next = new URLSearchParams();
-    if (cycle) next.set('cycle', cycle);
+    if (cycleOverride) next.set('cycle', cycleOverride);
     if (search) next.set('search', search);
     if (category != null) next.set('category', String(category));
     if (account) next.set('account', account);
@@ -61,7 +58,7 @@ export default function Transactions() {
     if (review) next.set('review', '1');
     if (charge) next.set('charge', charge);
     setUrlParams(next, { replace: true });
-  }, [cycle, search, category, account, kind, review, charge, setUrlParams]);
+  }, [cycleOverride, search, category, account, kind, review, charge, setUrlParams]);
   const [hideCardPayments, setHideCardPayments] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Tx | null>(null);
@@ -134,11 +131,17 @@ export default function Transactions() {
   );
   const allSelected = rows.length > 0 && rows.every(r => selected.has(r.id));
   const toggle = (id: number) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const cycles = useMemo(() => cycleOptions(), []);
   const cyclePickerOptions = useMemo<PickerOption[]>(() => [
-    { value: '', label: 'כל התקופות' },
-    ...cycles.map(c => ({ value: c, label: monthName(c), icon: <CalendarDays /> })),
-  ], [cycles]);
+    { value: PERIOD, label: 'כל התקופה', icon: <CalendarDays /> },
+    ...period.cycles.map(c => ({ value: c, label: monthName(c), icon: <CalendarDays /> })),
+    ...(cycleOverride && !period.cycles.includes(cycleOverride) ? [{ value: cycleOverride, label: periodName(cycleOverride), icon: <CalendarDays /> }] : []),
+    { value: '', label: 'בלי הגבלת זמן' },
+  ], [period.cycles, cycleOverride]);
+  const pickCycle = (v: string | null) => {
+    if (v === '') { setCycleOverride(''); return; }
+    setCycleOverride(null);
+    period.setSelected(v === PERIOD || v == null ? null : v);
+  };
   const kindFilterOptions = useMemo<PickerOption[]>(() => [{ value: '', label: 'כל הסוגים' }, ...kindOptions()], []);
   const tagOptions = useMemo<PickerOption[]>(() => [
     { value: '', label: '+ תגית' },
@@ -151,7 +154,7 @@ export default function Transactions() {
   return (
     <>
       <PageHeader title="תנועות" icon={ArrowLeftRight}
-        subtitle={data ? <>{data.total} תנועות{cycle && !review ? ` · ${monthName(cycle)}` : ''}</> : undefined}
+        subtitle={data ? <>{data.total} תנועות{cycle && !review ? ` · ${periodName(cycle)}` : ''}</> : undefined}
         actions={<>
           <button className="btn" onClick={() => setShowCategories(true)} disabled={!data}><PieChart />פירוט לפי קטגוריות</button>
           <button className="btn btn-primary" onClick={() => setManual('new')}><Plus />הוספת הוצאה</button>
@@ -174,7 +177,7 @@ export default function Transactions() {
       )}
 
       {showCategories && data && (
-        <Modal wide title={`הוצאות לפי קטגוריה${cycle && !review ? ` — ${monthName(cycle)}` : ''}`} onClose={() => setShowCategories(false)}>
+        <Modal wide title={`הוצאות לפי קטגוריה${cycle && !review ? ` — ${periodName(cycle)}` : ''}`} onClose={() => setShowCategories(false)}>
           <CategoryReport rows={data.rows} truncated={data.total > data.rows.length}
             onPick={id => { setCategory(id); setShowCategories(false); }} />
         </Modal>
@@ -187,7 +190,7 @@ export default function Transactions() {
             <button className="btn-ghost btn-icon min-h-7" onClick={() => setCharge(null)} aria-label="הסר סינון חיוב"><X /></button>
           </div>
         ) : (
-          <Picker className="input" value={cycle} onChange={v => setCycle(v ?? '')} disabled={review} options={cyclePickerOptions} placeholder="כל התקופות" searchable={false} />
+          <Picker className="input" value={cycleOverride ?? period.selected ?? PERIOD} onChange={pickCycle} disabled={review} options={cyclePickerOptions} placeholder="כל התקופות" searchable={false} />
         )}
         <input className="input" placeholder="חיפוש…" value={search} onChange={e => setSearch(e.target.value)} />
         <CategorySelect value={category} onChange={setCategory} />
@@ -218,7 +221,7 @@ export default function Transactions() {
       {isLoading ? <Loading /> : error ? <ErrorBox error={error} /> : rows.length === 0 ? (charge ? (
         <Empty>
           אין עדיין פירוט של החיוב הזה — הכרטיס לא דיווח אילו עסקאות ייכנסו לחיוב של {day(charge)} (הסכום בתחזית הוא הערכה לפי חיובים קודמים).
-          <div className="mt-2"><button className="btn" onClick={() => { setCharge(null); setCycle(''); }}>הצג את כל העסקאות בכרטיס</button></div>
+          <div className="mt-2"><button className="btn" onClick={() => { setCharge(null); setCycleOverride(''); }}>הצג את כל העסקאות בכרטיס</button></div>
         </Empty>
       ) : <Empty><Inbox className="mx-auto mb-2 h-6 w-6 opacity-50" />אין תנועות לתצוגה</Empty>) : (
         <div className="card animate-fade-in scroll-x p-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0">

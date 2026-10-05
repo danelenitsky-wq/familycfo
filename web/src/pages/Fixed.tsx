@@ -6,7 +6,7 @@ import { Banknote, CalendarCheck, CalendarClock, CalendarDays, Clock, Layers, Li
 import { api, qs, type Commitment, type MonthPlan, type MonthPlanned, type PlannedItem } from '../api';
 import { ManualEntry } from '../components/ManualEntry';
 import { ScheduledManager } from '../components/ScheduledManager';
-import { useFilters, useLookups } from '../state';
+import { useFilters, useLookups, usePeriod } from '../state';
 import { day, monthName, pct, todayIso } from '../format';
 import { StartOfMonth } from '../components/StartOfMonth';
 import { AccountSelect, CategorySelect, Empty, ErrorBox, Field, Loading, MemberBadge, Modal, Money, PageHeader, Picker, SectionTitle, Segmented, Stat } from '../components/ui';
@@ -35,7 +35,10 @@ export default function Fixed() {
   const { params } = useFilters();
   const { accountName } = useLookups();
   const qc = useQueryClient();
-  const [cycleKey, setCycleKey] = useState<string | null>(null);
+  // the month picked in the app's period (this page plans one month; "all the period" → the current month)
+  const { selected } = usePeriod();
+  const [cycleKey, setCycleKey] = useState<string | null>(selected);
+  useEffect(() => setCycleKey(selected), [selected]);
   const [view, setView] = useState<'accounts' | 'categories'>('accounts');
   const [adding, setAdding] = useState<{ name: string; amount: number; day: number; accountId: string | null; categoryId: number | null; matchPattern: string } | null>(null);
   const query = { ...params, cycle: cycleKey ?? undefined };

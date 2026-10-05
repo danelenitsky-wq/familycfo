@@ -170,7 +170,13 @@ export function analyticsRoutes(app: FastifyInstance, db: DB): void {
     ...scrapeState(),
     lastSuccessAt: db.prepare(`SELECT MAX(finished_at) FROM scrape_runs WHERE success = 1`).pluck().get() as string | null,
   }));
-  app.post('/api/scrape', async () => startScrape(db));
+  // body { months }: how far back to fetch (1 / 3 / 6 / 12); also remembered as the period the app shows
+  app.post('/api/scrape', async req => {
+    const months = Number((req.body as { months?: number } | null)?.months);
+    const monthsBack = [1, 3, 6, 12].includes(months) ? months : undefined;
+    if (monthsBack) db.prepare(`INSERT INTO settings (key, value) VALUES ('view_months', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(monthsBack));
+    return startScrape(db, monthsBack);
+  });
   app.post('/api/scrape/otp', async req => {
     submitOtp(String((req.body as { code?: unknown })?.code ?? '').trim());
     return { ok: true };

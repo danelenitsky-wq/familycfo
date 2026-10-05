@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Circle, KeyRound, LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { api, type ScrapeJob } from '../api';
 import { Popover, PopoverContent, PopoverTrigger } from './kit/popover';
+import { Modal } from './ui';
+import { PERIOD_OPTIONS, usePeriod } from '../state';
 import { cn } from '@/lib/utils';
 
 export const COMPANY_LABELS: Record<string, string> = {
@@ -28,6 +30,9 @@ export function ScrapeButton() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState('');
+  // asking how many months back to fetch before a scrape starts
+  const [choosing, setChoosing] = useState(false);
+  const period = usePeriod();
   const job = useQuery({
     queryKey: ['scrape'],
     queryFn: () => api.get<ScrapeJob>('/scrape'),
@@ -37,8 +42,11 @@ export function ScrapeButton() {
   const running = active(data?.status);
 
   const start = useMutation({
-    mutationFn: () => api.post<ScrapeJob>('/scrape', {}),
-    onSuccess: () => { setOpen(true); qc.invalidateQueries({ queryKey: ['scrape'] }); },
+    mutationFn: (months: number) => api.post<ScrapeJob>('/scrape', { months }),
+    onSuccess: () => {
+      setChoosing(false); setOpen(true); period.setSelected(null);
+      qc.invalidateQueries({ queryKey: ['scrape'] }); qc.invalidateQueries({ queryKey: ['meta'] });
+    },
   });
   const sendOtp = useMutation({
     mutationFn: () => api.post('/scrape/otp', { code }),
@@ -60,10 +68,25 @@ export function ScrapeButton() {
 
   return (
     <div className="flex flex-col items-end gap-1">
+      {choosing && (
+        <Modal title="לכמה זמן אחורה להביא נתונים?" onClose={() => setChoosing(false)}>
+          <div className="grid grid-cols-2 gap-2">
+            {PERIOD_OPTIONS.map(o => (
+              <button key={o.months} type="button" disabled={start.isPending}
+                className={cn('btn h-14 justify-center text-base', o.months === period.months && 'btn-primary')}
+                onClick={() => start.mutate(o.months)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">זו גם התקופה שתוצג בכל המסכים. אחר כך אפשר לבחור למעלה חודש מסוים או את כל התקופה ביחד.</p>
+          {start.error && <p className="mt-2 text-sm text-red-600">{(start.error as Error).message}</p>}
+        </Modal>
+      )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button type="button" className={cn('btn', data?.otp ? 'border-amber-400 text-amber-700 dark:text-amber-300 animate-pulse' : !running && 'btn-primary')}
-            onClick={e => { if (!running && !data?.otp) { e.preventDefault(); start.mutate(); } }}
+            onClick={e => { if (!running && !data?.otp) { e.preventDefault(); setChoosing(true); } }}
             disabled={start.isPending}>
             {data?.otp ? <KeyRound /> : <RefreshCw className={cn(running && 'animate-spin')} />}
             {label}

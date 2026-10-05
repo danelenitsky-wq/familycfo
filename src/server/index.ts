@@ -57,7 +57,7 @@ app.get('/api/meta', async () => ({
 
 app.put('/api/settings', async req => {
   const body = req.body as Record<string, string | number>;
-  const allowed = ['cycle_start_day', 'balance_buffer', 'data_source'];
+  const allowed = ['cycle_start_day', 'balance_buffer', 'data_source', 'view_months'];
   const upsert = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
   for (const [k, v] of Object.entries(body)) if (allowed.includes(k)) upsert.run(k, String(v));
   return { ok: true };

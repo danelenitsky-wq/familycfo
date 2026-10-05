@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CreditCard, Gauge as GaugeIcon, Landmark, LayoutDashboard, PiggyBank, Receipt, Sparkles, TriangleAlert, Users, Wallet } from 'lucide-react';
 import { api, qs, type CycleSummary, type InstallmentPlan, type Summary } from '../api';
-import { useFilters, useLookups } from '../state';
-import { day, monthName } from '../format';
+import { useFilters, useLookups, usePeriod } from '../state';
+import { day, monthName, periodName as periodLabel } from '../format';
 import { ErrorBox, Loading, MemberBadge, Money, MoreLink, PageHeader, Progress, SectionTitle, SeverityDot, Stat } from '../components/ui';
 import { BarList, CashflowBars, DonutChart, ForecastChart, Gauge } from '../components/charts';
 import { DayDetails } from '../components/DayDetails';
@@ -16,9 +16,12 @@ const shortMonth = (key: string) => new Intl.DateTimeFormat('he-IL', { month: 's
 export default function Dashboard() {
   const { params } = useFilters();
   const { accountName, member, meta } = useLookups();
-  const { data, isLoading, error } = useQuery({ queryKey: ['summary', params], queryFn: () => api.get<Summary>(`/summary${qs(params)}`) });
+  const period = usePeriod();
+  const isRange = period.cycleParam.includes('..');
+  const summaryQuery = { ...params, cycle: period.cycleParam };
+  const { data, isLoading, error } = useQuery({ queryKey: ['summary', summaryQuery], queryFn: () => api.get<Summary>(`/summary${qs(summaryQuery)}`) });
   const installments = useQuery({ queryKey: ['installments', params], queryFn: () => api.get<InstallmentPlan[]>(`/installments${qs(params)}`) });
-  const history = useQuery({ queryKey: ['cashflow', params], queryFn: () => api.get<CycleSummary[]>(`/cashflow${qs({ ...params, cycles: 7 })}`) });
+  const history = useQuery({ queryKey: ['cashflow', params, period.months], queryFn: () => api.get<CycleSummary[]>(`/cashflow${qs({ ...params, cycles: Math.max(period.months, 2) })}`) });
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   if (isLoading) return <Loading />;
@@ -43,7 +46,8 @@ export default function Dashboard() {
   const hist = history.data ?? [];
   const past = hist.filter(h => h.cycle.key !== cycle.cycle.key);
   const avgSpend = past.length ? past.reduce((s, h) => s + h.spend, 0) / past.length : 0;
-  const spendDelta = avgSpend > 0 ? { value: cycle.spend / avgSpend - 1, label: 'מול הממוצע', positiveIsGood: false } : undefined;
+  // a single month against the average month (the whole period has no single month to compare)
+  const spendDelta = !isRange && avgSpend > 0 ? { value: cycle.spend / avgSpend - 1, label: 'מול הממוצע', positiveIsGood: false } : undefined;
   const balanceSpark = (forecast.total.points ?? []).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 20)) === 0).map(p => p.expected);
 
   const members = Object.entries(cycle.byMember).map(([id, v]) => ({ id: Number(id), ...v })).filter(m => m.spend > 0 || m.income > 0);
@@ -52,7 +56,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader title="סקירה" icon={LayoutDashboard} subtitle={`מחזור ${monthName(cycle.cycle.key)} · ${day(cycle.cycle.start)} – ${day(cycle.cycle.end)}`} actions={<ScrapeButton />} />
+      <PageHeader title="סקירה" icon={LayoutDashboard} subtitle={`${isRange ? 'כל התקופה' : 'מחזור'} ${periodLabel(cycle.cycle.key)} · ${day(cycle.cycle.start)} – ${day(cycle.cycle.end)}`} actions={<ScrapeButton />} />
 
       <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
         <Stat index={0} icon={Landmark} color="var(--chart-5)" label="יתרה בבנקים עכשיו" value={bankTotal} tone={bankTotal < 0 ? 'bad' : undefined}
@@ -60,7 +64,7 @@ export default function Dashboard() {
         <Stat index={1} icon={GaugeIcon} label={`יתרה צפויה בסוף ${periodName}`} value={forecast.total.endOfCycle}
           tone={forecast.total.endOfCycle < forecast.buffer ? 'bad' : 'good'} spark={balanceSpark}
           hint={<>נקודה נמוכה: <Money value={forecast.total.lowest.amount} /> ב-{day(forecast.total.lowest.date)}</>} />
-        <Stat index={2} icon={Receipt} color="var(--chart-3)" label="הוצאות המחזור" value={cycle.spend} delta={spendDelta}
+        <Stat index={2} icon={Receipt} color="var(--chart-3)" label={isRange ? 'הוצאות בתקופה' : 'הוצאות המחזור'} value={cycle.spend} delta={spendDelta}
           spark={hist.length > 1 ? hist.map(h => h.spend) : undefined}
           hint={<Link to="/fixed" className="hover:underline">קבועות <Money value={cycle.fixed} /> · משתנות <Money value={cycle.dynamic} /> ←</Link>} />
         {capacity.monthlyCapacity >= 0 ? (

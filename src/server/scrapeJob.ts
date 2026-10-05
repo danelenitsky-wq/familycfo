@@ -43,7 +43,7 @@ const setCompany = (company: string, patch: Partial<ScrapeCompanyState>) => {
   state.companies = state.companies.map(c => (c.company === company ? { ...c, ...patch } : c));
 };
 
-export function startScrape(db: DB): ScrapeJobState {
+export function startScrape(db: DB, monthsBack?: number): ScrapeJobState {
   if (scrapeRunning()) throw Object.assign(new Error('a scrape is already running'), { statusCode: 409 });
   let config: ReturnType<typeof loadConfig>;
   try {
@@ -60,6 +60,7 @@ export function startScrape(db: DB): ScrapeJobState {
 
   (async () => {
     const results = await scrapeAll(config, db, {
+      monthsBack,
       requestOtp: company => new Promise<string>(resolve => {
         answerOtp = resolve;
         state.otp = { company, requestedAt: new Date().toISOString() };

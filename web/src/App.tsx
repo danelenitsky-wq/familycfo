@@ -3,11 +3,11 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-route
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import {
-  ArrowLeftRight, ChartColumn, Bell, Briefcase, CalendarCheck, Home, Layers, LayoutDashboard, Lightbulb, Menu, PieChart,
+  ArrowLeftRight, CalendarDays, CalendarRange, ChartColumn, Bell, Briefcase, CalendarCheck, Home, Layers, LayoutDashboard, Lightbulb, Menu, PieChart,
   ChartCandlestick, FileUp, Settings2, Wand2, ShieldCheck, Tags, TrendingUp, Umbrella, Wallet, X, type LucideIcon,
 } from 'lucide-react';
 import { api, type Alert } from './api';
-import { useFilters, useMeta } from './state';
+import { PERIOD_OPTIONS, useFilters, useMeta, usePeriod } from './state';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Budgets from './pages/Budgets';
@@ -31,6 +31,7 @@ import { AgentChat } from './components/AgentChat';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/kit/tooltip';
 import { MemberAvatar } from '@/lib/visuals';
 import { cn } from '@/lib/utils';
+import { monthName } from './format';
 
 const NAV: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/', label: 'סקירה', icon: LayoutDashboard },
@@ -61,12 +62,34 @@ function useMediaQuery(query: string): boolean {
   );
 }
 
+/** The period every page shows: the range (months back) and one month of it, or all of it together. */
+function PeriodPicker() {
+  const { months, setMonths, cycles, selected, setSelected } = usePeriod();
+  const rangeLabel = PERIOD_OPTIONS.find(o => o.months === months)?.label ?? `${months} חודשים`;
+  return (
+    <div className="flex items-center gap-1 max-md:w-full">
+      <Picker className="input w-auto min-w-28 max-md:flex-1" aria-label="טווח" searchable={false}
+        value={String(months)} onChange={v => v && setMonths(Number(v))}
+        options={PERIOD_OPTIONS.map(o => ({ value: String(o.months), label: o.label, icon: <CalendarRange /> }))} />
+      {months > 1 && (
+        <Picker className="input w-auto min-w-40 max-md:flex-1" aria-label="חודש" searchable={false}
+          value={selected ?? ''} onChange={v => setSelected(v || null)}
+          options={[
+            { value: '', label: `כל התקופה (${rangeLabel})`, icon: <CalendarRange /> },
+            ...cycles.map(c => ({ value: c, label: monthName(c), icon: <CalendarDays /> })),
+          ]} />
+      )}
+    </div>
+  );
+}
+
 function FilterBar() {
   const { filters, setFilters } = useFilters();
   const { data: meta } = useMeta();
   if (!meta) return <div className="h-9" aria-hidden />;
   return (
     <div className="flex flex-wrap items-center gap-2">
+      <PeriodPicker />
       <Segmented value={filters.memberId} onChange={memberId => setFilters({ ...filters, memberId })}
         className="max-md:flex max-md:w-full max-md:flex-nowrap max-md:[&>*]:flex-1 max-md:[&>*]:px-2"
         options={[

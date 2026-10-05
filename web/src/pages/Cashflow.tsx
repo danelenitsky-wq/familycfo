@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, qs, type CycleSummary, type Forecast, type IncomeExpectation, type InstallmentPlan, type MonthIncome, type SavingsCapacity, type TightMonthPlan } from '../api';
-import { useFilters, useLookups } from '../state';
+import { useFilters, useLookups, usePeriod } from '../state';
 import { day, monthName, SCHEDULED_KIND_LABELS } from '../format';
 import { BarChart3, Banknote, CalendarRange, Layers, Settings2, TrendingUp, TriangleAlert, Users } from 'lucide-react';
 import { ErrorBox, Loading, MemberBadge, Money, PageHeader, SectionTitle, Segmented } from '../components/ui';
@@ -23,7 +23,10 @@ export default function Cashflow() {
   const memberOf = (e: { memberId: number | null; accountId: string }) =>
     e.memberId ?? meta?.accounts.find(a => a.id === e.accountId)?.ownerMemberId ?? SHARED_MEMBER;
   const forecastQ = useQuery({ queryKey: ['forecast', filters.memberId], queryFn: () => api.get<Forecast>(`/forecast${qs({ member: filters.memberId })}`) });
-  const historyQ = useQuery({ queryKey: ['cashflow', params], queryFn: () => api.get<CycleSummary[]>(`/cashflow${qs({ ...params, cycles: 7 })}`) });
+  // month-by-month history over the app's period
+  const { months } = usePeriod();
+  const historyQuery = { ...params, cycles: Math.max(months, 2) };
+  const historyQ = useQuery({ queryKey: ['cashflow', historyQuery], queryFn: () => api.get<CycleSummary[]>(`/cashflow${qs(historyQuery)}`) });
   const planningQ = useQuery({ queryKey: ['planning', params], queryFn: () =>
     api.get<{ capacity: SavingsCapacity; tight: TightMonthPlan; income: IncomeExpectation; monthIncome: MonthIncome }>(`/planning${qs(params)}`) });
   const installmentsQ = useQuery({ queryKey: ['installments', params], queryFn: () => api.get<InstallmentPlan[]>(`/installments${qs(params)}`) });

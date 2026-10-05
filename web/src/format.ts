@@ -21,6 +21,8 @@ export const fullDate = (d: string | null | undefined) => (d ? fullFmt.format(ne
 
 const monthFmt = new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' });
 export const monthName = (key: string) => monthFmt.format(new Date(`${key}-01T12:00:00`));
+/** A month, or a range of months "2026-07..2026-10" → "יולי 2026 – אוקטובר 2026". */
+export const periodName = (key: string) => (key.includes('..') ? key.split('..').map(monthName).join(' – ') : monthName(key));
 
 export const KIND_LABELS: Record<string, string> = {
   expense: 'הוצאה', income: 'הכנסה', refund: 'זיכוי', transfer: 'העברה פנימית', card_payment: 'תשלום כרטיס', savings: 'הפקדה לחיסכון',
