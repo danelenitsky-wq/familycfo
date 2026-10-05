@@ -13,10 +13,15 @@ import {
   NewTagInput, PageHeader, Picker, Stat, TagPicker, type PickerOption,
 } from '../components/ui';
 import { CategoryReport } from '../components/CategoryReport';
+import { BreakdownModal, type BreakdownGroup, type BreakdownLine } from '../components/Breakdown';
 import { ManualEntry } from '../components/ManualEntry';
 import { MemberAvatar } from '@/lib/visuals';
 
-interface TxPage { total: number; totals: { income: number; spend: number; businessIncome: number; businessSpend: number; moved: number }; rows: Tx[] }
+type Metric = 'income' | 'spend' | 'savings';
+interface TxPage {
+  total: number; totals: { income: number; spend: number; savings: number; businessIncome: number; businessSpend: number; moved: number }; rows: Tx[];
+  breakdown?: Record<Metric, { lines: BreakdownLine[]; groups: BreakdownGroup[] }>;
+}
 type SortKey = 'date' | 'description' | 'amount' | 'category' | 'member' | 'business' | 'account';
 
 const KIND_ICONS: Record<string, ReactNode> = {
@@ -71,6 +76,11 @@ export default function Transactions() {
 
   const query = { ...params, cycle: review ? undefined : cycle || undefined, search, category, account, kind, review: review ? 1 : undefined, charge: charge ?? undefined, hideCardPayments: hideCardPayments ? 1 : undefined, limit: 1000 };
   const { data, isLoading, error } = useQuery({ queryKey: ['transactions', query], queryFn: () => api.get<TxPage>(`/transactions${qs(query)}`) });
+  // a stat tile's calculation, fetched when it's opened
+  const [explain, setExplain] = useState<Metric | null>(null);
+  const breakdownQuery = { ...query, breakdown: 1, limit: 1 };
+  const breakdown = useQuery({ queryKey: ['transactions', breakdownQuery], enabled: explain != null,
+    queryFn: () => api.get<TxPage>(`/transactions${qs(breakdownQuery)}`) });
 
   const invalidate = () => {
     for (const k of ['transactions', 'summary', 'budgets', 'cashflow', 'planning', 'forecast', 'month-plan', 'income']) qc.invalidateQueries({ queryKey: [k] });
@@ -163,29 +173,41 @@ export default function Transactions() {
         </>} />
 
       {data && (
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat index={0} label="תנועות" icon={Receipt} color="var(--chart-1)"
             value={<AnimatedNumber value={data.total} format={formatCount} className="num" />}
             hint={data.totals.moved > 0 ? <>מתוכן העברות, חסכונות ותשלומי כרטיס <Money value={data.totals.moved} /> — לא נספרים</> : undefined} />
-          <Stat index={1} label="הכנסות" icon={ArrowDownLeft} tone="good" value={data.totals.income}
+          <Stat index={1} label="הכנסות" icon={ArrowDownLeft} tone="good" value={data.totals.income} onClick={() => setExplain('income')}
             hint={data.totals.businessIncome > 0 ? <>ועוד <Money value={data.totals.businessIncome} /> הכנסות עסק</> : 'חלק הבית, בלי העברות בין חשבונות'} />
-          <Stat index={2} label="הוצאות" icon={ArrowUpRight} tone="bad" value={data.totals.spend}
-            hint={<button type="button" className="hover:underline" onClick={() => setShowCategories(true)}>
+          <Stat index={2} label="הוצאות" icon={ArrowUpRight} tone="bad" value={data.totals.spend} onClick={() => setExplain('spend')}
+            hint={<button type="button" className="hover:underline" onClick={e => { e.stopPropagation(); setShowCategories(true); }}>
               {data.totals.businessSpend > 0 ? <>ועוד <Money value={data.totals.businessSpend} /> של העסק · </> : null}לפי קטגוריות ←
             </button>} />
-          <Stat index={3} label="נטו" icon={Scale} color="var(--chart-6)"
-            value={<Money value={data.totals.income - data.totals.spend} colored animated />} hint="הכנסות פחות הוצאות" />
+          <Stat index={3} label="חיסכון והשקעות" icon={PiggyBank} color="var(--chart-5)" value={data.totals.savings} onClick={() => setExplain('savings')}
+            hint="הפקדות לחיסכון / השקעות, פחות משיכות" />
+          <Stat index={4} label="נטו" icon={Scale} color="var(--chart-6)"
+            value={<Money value={data.totals.income - data.totals.spend} colored animated />} hint="הכנסות פחות הוצאות (החיסכון לא מקטין אותו)" />
         </div>
       )}
       {data && rangeMonths > 1 && (
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Stat index={4} label={`ממוצע הכנסות לחודש`} icon={ArrowDownLeft} tone="good" value={Math.round(data.totals.income / rangeMonths)}
             hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
           <Stat index={5} label="ממוצע הוצאות לחודש" icon={ArrowUpRight} tone="bad" value={Math.round(data.totals.spend / rangeMonths)}
             hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
-          <Stat index={6} label="ממוצע נטו לחודש" icon={Scale} color="var(--chart-6)"
+          <Stat index={6} label="ממוצע חיסכון לחודש" icon={PiggyBank} color="var(--chart-5)" value={Math.round(data.totals.savings / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={7} label="ממוצע נטו לחודש" icon={Scale} color="var(--chart-6)"
             value={<Money value={Math.round((data.totals.income - data.totals.spend) / rangeMonths)} colored animated />} hint="הכנסות פחות הוצאות, בממוצע לחודש" />
         </div>
+      )}
+
+      {explain && (
+        <BreakdownModal onClose={() => setExplain(null)}
+          title={`${{ income: 'הכנסות', spend: 'הוצאות', savings: 'חיסכון והשקעות' }[explain]} — איך זה חושב${cycle && !review ? ` · ${periodName(cycle)}` : ''}`}
+          lines={breakdown.data?.breakdown?.[explain].lines ?? []}
+          groups={breakdown.data?.breakdown?.[explain].groups ?? []}
+          groupsTitle={breakdown.isPending ? 'טוען…' : explain === 'savings' ? 'לפי פעולה' : 'לפי קטגוריה'} />
       )}
 
       {showCategories && data && (

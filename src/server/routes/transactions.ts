@@ -9,7 +9,7 @@ import { isOverdue, linkPlanned, listPlanned, matchPlanned, plannedCandidates, p
 
 interface TxQuery {
   from?: string; to?: string; cycle?: string; member?: string; business?: string; tags?: string;
-  category?: string; account?: string; search?: string; kind?: string; review?: string; hideCardPayments?: string;
+  category?: string; account?: string; search?: string; kind?: string; review?: string; hideCardPayments?: string; breakdown?: string;
   /** YYYY-MM-DD: only card rows charged in that statement (same card, same charge month) */
   charge?: string;
   limit?: string; offset?: string;
@@ -25,6 +25,65 @@ export function parseFilter(q: TxQuery) {
     categoryId: q.category ? Number(q.category) : undefined,
     accountId: q.account || undefined,
     search: q.search || undefined,
+  };
+}
+
+export interface BreakdownGroup { name: string; amount: number; rows: { id: number; date: string; description: string; account: string; amount: number }[] }
+export interface Breakdown { lines: { label: string; amount: number; note?: string; total?: boolean }[]; groups: BreakdownGroup[] }
+
+/** Group rows by category (or description), largest first, each with its rows. */
+function groupRows(list: Tx[], value: (t: Tx) => number, name: (t: Tx) => string, accounts: Map<string, string>): BreakdownGroup[] {
+  const groups = new Map<string, BreakdownGroup>();
+  for (const t of list) {
+    const v = value(t);
+    if (!v) continue;
+    const key = name(t);
+    const g = groups.get(key) ?? { name: key, amount: 0, rows: [] };
+    g.amount += v;
+    g.rows.push({ id: t.id, date: t.effectiveDate, description: t.description, account: accounts.get(t.accountId) ?? t.accountId, amount: Math.round(v * 100) / 100 });
+    groups.set(key, g);
+  }
+  return [...groups.values()].map(g => ({ ...g, amount: Math.round(g.amount * 100) / 100 })).sort((a, b) => b.amount - a.amount);
+}
+
+/** The calculation behind the income / spend / savings totals of a transactions view. */
+function breakdownOf(counted: Tx[], accounts: Map<string, string>): Record<'income' | 'spend' | 'savings', Breakdown> {
+  const sum = (f: (t: Tx) => number) => Math.round(counted.reduce((s, t) => s + f(t), 0) * 100) / 100;
+  const byCategory = (t: Tx) => t.categoryName ?? 'ללא קטגוריה';
+  const purchases = sum(spendOf), refunds = sum(refundOf);
+  const businessSpend = sum(t => (t.kind === 'expense' ? Math.max(0, -t.businessAmount) : 0));
+  const paybacks = sum(t => (t.kind === 'expense' ? Math.max(0, t.paybackTotal * (t.personalAmount / (t.amount || 1))) : 0));
+  const deposits = sum(t => (t.kind === 'savings' && t.amount < 0 ? -t.amount : 0));
+  const withdrawals = sum(t => (t.kind === 'savings' && t.amount > 0 ? t.amount : 0));
+  return {
+    income: {
+      lines: [
+        { label: 'הכנסות (חלק הבית)', amount: sum(incomeOf), total: true },
+        { label: 'לא נספר: הכנסות של עסק', amount: sum(t => (t.kind === 'income' && !t.linkedInflow ? Math.max(0, t.businessAmount) : 0)) },
+        { label: 'לא נספר: החזרים שקושרו להוצאה (ביט וכו׳)', amount: sum(t => (t.linkedInflow && t.amount > 0 ? t.amount : 0)), note: 'מקטינים את ההוצאה במקום להיחשב הכנסה' },
+        { label: 'לא נספר: העברות בין החשבונות שלכם', amount: sum(t => (t.kind === 'transfer' && t.amount > 0 ? t.amount : 0)) },
+      ],
+      groups: groupRows(counted, incomeOf, byCategory, accounts),
+    },
+    spend: {
+      lines: [
+        { label: 'רכישות ותשלומים', amount: purchases + paybacks, note: 'חלק הבית, לפני החזרים' },
+        { label: 'פחות: החזרים מחברים / ביט שקושרו', amount: -paybacks },
+        { label: 'פחות: זיכויים והחזרים', amount: -refunds },
+        { label: 'הוצאות', amount: Math.round((purchases - refunds) * 100) / 100, total: true },
+        { label: 'לא נספר: חלק העסק', amount: businessSpend },
+        { label: 'לא נספר: תשלומי כרטיס אשראי מהבנק', amount: sum(t => (t.kind === 'card_payment' ? Math.abs(t.amount) : 0)), note: 'הרכישות עצמן כבר נספרו בכרטיס' },
+      ],
+      groups: groupRows(counted, t => spendOf(t) - refundOf(t), byCategory, accounts),
+    },
+    savings: {
+      lines: [
+        { label: 'הפקדות לחיסכון / השקעות', amount: deposits },
+        { label: 'פחות: משיכות מחיסכון', amount: -withdrawals },
+        { label: 'חיסכון נטו', amount: Math.round((deposits - withdrawals) * 100) / 100, total: true },
+      ],
+      groups: groupRows(counted, t => (t.kind === 'savings' ? -t.amount : 0), t => t.description, accounts),
+    },
   };
 }
 
@@ -72,9 +131,13 @@ export function transactionRoutes(app: FastifyInstance, db: DB): void {
         spend: business ? sum(t => (t.kind === 'expense' ? Math.max(0, -t.businessAmount) : 0)) : sum(t => spendOf(t) - refundOf(t)),
         businessIncome: business ? 0 : sum(t => (t.kind === 'income' && !t.linkedInflow ? Math.max(0, t.businessAmount) : 0)),
         businessSpend: business ? 0 : sum(t => (t.kind === 'expense' ? Math.max(0, -t.businessAmount) : 0)),
+        /** money put into savings / investments (deposits less withdrawals) */
+        savings: sum(t => (t.kind === 'savings' ? -t.amount : 0)),
         /** transfers, savings and card bills (in + out) — shown so the gap to the bank statement is clear */
         moved: sum(t => (NON_SPEND_KINDS.has(t.kind) ? Math.abs(t.amount) : 0)),
       },
+      // breakdown=1: how income, spend and savings were added up (the stat tiles open it)
+      breakdown: q.breakdown === '1' ? breakdownOf(counted, accounts) : undefined,
       rows: txs.slice(offset, offset + limit).map(t => ({ ...t, accountName: accounts.get(t.accountId), excluded: excluded.has(t.id), link: linkOf(t) })),
     };
   });
