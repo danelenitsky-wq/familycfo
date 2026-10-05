@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { api, qs, type Tx } from '../api';
 import { useFilters, useLookups, usePeriod } from '../state';
-import { day, KIND_LABELS, monthName, periodName } from '../format';
+import { day, KIND_LABELS, monthName, monthsIn, periodName } from '../format';
 import {
   AccountSelect, AnimatedNumber, BusinessSelect, CategorySelect, Empty, ErrorBox, Field, Loading, MemberSelect, Modal, Money,
   NewTagInput, PageHeader, Picker, Stat, TagPicker, type PickerOption,
@@ -46,6 +46,8 @@ export default function Transactions() {
   const [review, setReview] = useState(urlParams.get('review') === '1');
   // a card statement (from clicking an upcoming card charge): that card's rows charged in that month
   const [charge, setCharge] = useState<string | null>(urlParams.get('charge'));
+  // the whole period (several months): averages per month too
+  const rangeMonths = cycle && !review && !charge && cycle.includes('..') ? monthsIn(cycle) : 0;
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'date', dir: -1 });
   // keep the URL in sync so the filtered view can be bookmarked or opened again with Back
   useEffect(() => {
@@ -173,6 +175,16 @@ export default function Transactions() {
             </button>} />
           <Stat index={3} label="נטו" icon={Scale} color="var(--chart-6)"
             value={<Money value={data.totals.income - data.totals.spend} colored animated />} hint="הכנסות פחות הוצאות" />
+        </div>
+      )}
+      {data && rangeMonths > 1 && (
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Stat index={4} label={`ממוצע הכנסות לחודש`} icon={ArrowDownLeft} tone="good" value={Math.round(data.totals.income / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={5} label="ממוצע הוצאות לחודש" icon={ArrowUpRight} tone="bad" value={Math.round(data.totals.spend / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={6} label="ממוצע נטו לחודש" icon={Scale} color="var(--chart-6)"
+            value={<Money value={Math.round((data.totals.income - data.totals.spend) / rangeMonths)} colored animated />} hint="הכנסות פחות הוצאות, בממוצע לחודש" />
         </div>
       )}
 

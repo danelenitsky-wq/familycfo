@@ -22,6 +22,12 @@ export const fullDate = (d: string | null | undefined) => (d ? fullFmt.format(ne
 const monthFmt = new Intl.DateTimeFormat('he-IL', { month: 'long', year: 'numeric' });
 export const monthName = (key: string) => monthFmt.format(new Date(`${key}-01T12:00:00`));
 /** A month, or a range of months "2026-07..2026-10" → "יולי 2026 – אוקטובר 2026". */
+/** How many months a period key covers ("2026-07..2026-09" → 3). */
+export function monthsIn(key: string): number {
+  const [from, to] = key.split('..');
+  if (!to) return 1;
+  return (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7)) + 1;
+}
 export const periodName = (key: string) => (key.includes('..') ? key.split('..').map(monthName).join(' – ') : monthName(key));
 
 export const KIND_LABELS: Record<string, string> = {

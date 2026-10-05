@@ -18,7 +18,7 @@ export default function Dashboard() {
   const { accountName, member, meta } = useLookups();
   const period = usePeriod();
   const isRange = period.cycleParam.includes('..');
-  const summaryQuery = { ...params, cycle: period.cycleParam };
+  const summaryQuery = { ...params, cycle: period.cycleParam, forecastMonths: period.months };
   const { data, isLoading, error } = useQuery({ queryKey: ['summary', summaryQuery], queryFn: () => api.get<Summary>(`/summary${qs(summaryQuery)}`) });
   const installments = useQuery({ queryKey: ['installments', params], queryFn: () => api.get<InstallmentPlan[]>(`/installments${qs(params)}`) });
   const history = useQuery({ queryKey: ['cashflow', params, period.months], queryFn: () => api.get<CycleSummary[]>(`/cashflow${qs({ ...params, cycles: Math.max(period.months, 2) })}`) });
@@ -80,7 +80,7 @@ export default function Dashboard() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <div className="card min-w-0 lg:col-span-2">
-          <SectionTitle icon={Sparkles} action={<MoreLink to="/cashflow">ללוח התזרים</MoreLink>}>תחזית יתרה — עד {day(forecast.period.end)}</SectionTitle>
+          <SectionTitle icon={Sparkles} action={<MoreLink to="/cashflow">ללוח התזרים</MoreLink>}>תחזית יתרה — עד {day(forecast.total.points?.at(-1)?.date ?? forecast.period.end)}</SectionTitle>
           <ForecastChart points={forecast.total.points ?? []} buffer={forecast.buffer} lowest={forecast.total.lowest} height={280}
             events={forecast.events} dailyRate={forecast.total.dailyRate} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
           {selectedDate && (

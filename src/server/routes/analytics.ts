@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { DB } from '../../db/connection.js';
-import { addDays, cycleByKey, cycleFor, cycleStartDay, filterTx, loadTransactions, today } from '../../analytics/common.js';
+import { addDays, cycleByKey, cycleCount, cycleFor, cycleStartDay, daysBetween, filterTx, loadTransactions, today } from '../../analytics/common.js';
 import { cashflowHistory, cycleSummary, expectedIncome, monthIncome } from '../../analytics/cashflow.js';
 import { budgetStatus } from '../../analytics/budgets.js';
 import { buildForecast, bankBalances, planningPeriod } from '../../analytics/forecast.js';
@@ -17,12 +17,26 @@ import { parseFilter } from './transactions.js';
 
 type Q = Record<string, string | undefined>;
 
+/** The same day `n` months later (clamped to the month's last day). */
+function monthsAhead(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + n);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
+  return d.toISOString().slice(0, 10);
+}
+
 export function analyticsRoutes(app: FastifyInstance, db: DB): void {
   app.get('/api/summary', async req => {
     const q = req.query as Q;
     const filter = parseFilter(q);
-    const forecast = buildForecast(db, { memberId: filter.memberId });
-    const windowEnd = [forecast.period.end, addDays(today(), 30)].sort()[1];
+    // forecastMonths: how far ahead the balance forecast reaches (the app's period); default: at least 30 days
+    const months = [1, 3, 6, 12].includes(Number(q.forecastMonths)) ? Number(q.forecastMonths) : null;
+    const until = months ? monthsAhead(today(), months) : null;
+    const forecast = buildForecast(db, { memberId: filter.memberId, horizonDays: until ? daysBetween(today(), until) : undefined });
+    const windowEnd = until ?? [forecast.period.end, addDays(today(), 30)].sort()[1];
     const txs = loadTransactions(db);
     const periodCycle = cycleByKey(forecast.period.key, cycleStartDay(db));
     return {
@@ -69,6 +83,21 @@ export function analyticsRoutes(app: FastifyInstance, db: DB): void {
 
   app.get('/api/cards/upcoming', async () => upcomingCardCharges(db, loadTransactions(db)));
   app.get('/api/month-plan', async req => monthPlan(db, parseFilter(req.query as Q), { cycleKey: (req.query as Q).cycle || undefined }));
+  // averages of the month plan over a range of cycles ("2026-07..2026-10"): income, fixed, installments, net
+  app.get('/api/month-plan/average', async req => {
+    const q = req.query as Q;
+    const [from, to] = String(q.cycle ?? '').split('..');
+    if (!/^\d{4}-\d{2}$/.test(from ?? '') || !/^\d{4}-\d{2}$/.test(to ?? '')) throw Object.assign(new Error('cycle must be a range YYYY-MM..YYYY-MM'), { statusCode: 400 });
+    const filter = parseFilter(q);
+    const months = Array.from({ length: cycleCount(`${from}..${to}`) }, (_, i) => {
+      const d = new Date(Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1 + i, 1));
+      const plan = monthPlan(db, filter, { cycleKey: d.toISOString().slice(0, 7) });
+      const fixed = plan.fixed.total + plan.otherFixed.amount;
+      return { key: plan.cycle.key, income: plan.income, fixed, installments: plan.installments.total, net: plan.income - fixed - plan.installments.total };
+    });
+    const avg = (k: 'income' | 'fixed' | 'installments' | 'net') => Math.round(months.reduce((s, m) => s + m[k], 0) / months.length);
+    return { months, average: { income: avg('income'), fixed: avg('fixed'), installments: avg('installments'), net: avg('net') } };
+  });
   app.get('/api/installments', async req => installmentPlans(filterTx(loadTransactions(db), parseFilter(req.query as Q))));
 
   app.get('/api/recurring', async () => (db.prepare(`

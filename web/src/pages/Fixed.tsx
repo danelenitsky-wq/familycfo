@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
-import { Banknote, CalendarCheck, CalendarClock, CalendarDays, Clock, Layers, ListChecks, Pencil, PieChart, Plus, Sparkles, Wallet, X } from 'lucide-react';
+import { Banknote, CalendarCheck, CalendarClock, CalendarDays, Clock, Layers, ListChecks, Pencil, PieChart, Plus, Scale, Sparkles, Wallet, X } from 'lucide-react';
 import { api, qs, type Commitment, type MonthPlan, type MonthPlanned, type PlannedItem } from '../api';
 import { ManualEntry } from '../components/ManualEntry';
 import { ScheduledManager } from '../components/ScheduledManager';
@@ -36,7 +36,13 @@ export default function Fixed() {
   const { accountName } = useLookups();
   const qc = useQueryClient();
   // the month picked in the app's period (this page plans one month; "all the period" → the current month)
-  const { selected } = usePeriod();
+  const { selected, cycleParam } = usePeriod();
+  // the whole period: also the average month of it
+  const averageQuery = { ...params, cycle: cycleParam };
+  const average = useQuery({
+    queryKey: ['month-plan', 'average', averageQuery], enabled: !selected && cycleParam.includes('..'),
+    queryFn: () => api.get<{ months: { key: string }[]; average: { income: number; fixed: number; installments: number; net: number } }>(`/month-plan/average${qs(averageQuery)}`),
+  });
   const [cycleKey, setCycleKey] = useState<string | null>(selected);
   useEffect(() => setCycleKey(selected), [selected]);
   const [view, setView] = useState<'accounts' | 'categories'>('accounts');
@@ -97,6 +103,18 @@ export default function Fixed() {
               { value: nextCycleKey(current), label: `החודש הבא (${monthName(nextCycleKey(current))})`, icon: <CalendarClock /> },
             ]} />
         } />
+
+      {!selected && average.data && (
+        <div className="card mb-4">
+          <SectionTitle icon={Scale}>ממוצע לחודש בתקופה ({average.data.months.length} חודשים)</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <AverageTile label="הכנסה" value={average.data.average.income} color="var(--positive)" />
+            <AverageTile label="קבועות" value={average.data.average.fixed} color={COLORS.fixed} />
+            <AverageTile label="תשלומים" value={average.data.average.installments} color={COLORS.installments} />
+            <AverageTile label="נטו (הכנסה פחות קבועות ותשלומים)" value={average.data.average.net} color="var(--chart-6)" colored />
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
         <Stat index={0} icon={Banknote} color="var(--positive)" label={`הכנסה ב${monthName(data.cycle.key)}`} value={data.income}
@@ -398,4 +416,13 @@ function PlannedCard({ items, all, month, onAdd, onEdit, onAction }: {
 function GroupIcon({ name }: { name: string }) {
   const Icon = categoryIcon(name);
   return <span className="icon-tile h-6 w-6 rounded-md [&_svg]:h-3.5 [&_svg]:w-3.5"><Icon /></span>;
+}
+
+function AverageTile({ label, value, color, colored }: { label: string; value: number; color: string; colored?: boolean }) {
+  return (
+    <div className="rounded-lg border border-line-soft p-3">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="h-2 w-2 rounded-full" style={{ background: color }} />{label}</div>
+      <div className="mt-1 text-lg font-semibold"><Money value={value} colored={colored} /></div>
+    </div>
+  );
 }
