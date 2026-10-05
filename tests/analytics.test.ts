@@ -6,7 +6,7 @@ import { supersedeByLiabilities, type ScheduledItem } from '../src/analytics/sch
 import { findDuplicateCharges, findAnomalies } from '../src/analytics/alerts.js';
 import { findPaybackCandidates } from '../src/analytics/paybacks.js';
 import { detectRecurring } from '../src/analytics/recurring.js';
-import { summarizeCycle } from '../src/analytics/cashflow.js';
+import { cashflowHistory, summarizeCycle } from '../src/analytics/cashflow.js';
 import { setRate, toIls } from '../src/analytics/fx.js';
 import { monthPlan } from '../src/analytics/commitments.js';
 import { addAccount, addTx, testDb } from './helpers.js';
@@ -22,6 +22,22 @@ describe('cycles', () => {
     expect(cycleFor('2026-09-05', 10)).toEqual({ key: '2026-08', start: '2026-08-10', end: '2026-09-09' });
     expect(cycleFor('2026-09-10', 10)).toEqual({ key: '2026-09', start: '2026-09-10', end: '2026-10-09' });
     expect(cycleFor('2026-12-31', 1)).toEqual({ key: '2026-12', start: '2026-12-01', end: '2026-12-31' });
+  });
+});
+
+describe('cash flow history', () => {
+  it('leaves out the months before the data starts, but keeps an empty month in between', () => {
+    const db = testDb();
+    addAccount(db, 'bank:1', 'bank');
+    addTx(db, { account: 'bank:1', date: '2026-07-03', description: 'סופר', amount: -100, kind: 'expense' });
+    addTx(db, { account: 'bank:1', date: '2026-09-03', description: 'סופר', amount: -200, kind: 'expense' });
+    const h = cashflowHistory(db, { cycles: 6, asOf: '2026-09-15' });
+    expect(h.map(c => c.cycle.key)).toEqual(['2026-07', '2026-08', '2026-09']);
+    expect(h.map(c => c.spend)).toEqual([100, 0, 200]);
+  });
+
+  it('keeps the current month when there is no data at all', () => {
+    expect(cashflowHistory(testDb(), { cycles: 3, asOf: '2026-09-15' }).map(c => c.cycle.key)).toEqual(['2026-09']);
   });
 });
 

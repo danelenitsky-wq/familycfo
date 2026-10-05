@@ -14,7 +14,7 @@ description: Review the stock-market portfolio — holdings, live value, gain / 
    - **Today**: `totals.dayChangeIls` / `dayChangePct`; a holding with `dayChangePct = null` hasn't traded yet today.
    - **Concentration**: the biggest holdings' share of the portfolio, the share in foreign currency.
    - `history` is the value over time — from the buy dates where known (quantities are assumed unchanged since).
-3. Mention stale data: `quoteError` on a holding, `priceSource = manual` (price entered by hand — say its `manualPriceDate`).
+3. Mention stale data: `quoteError` on a holding, `priceSource = manual` (price entered by hand — say its `manualPriceDate`), `priceSource = cost` (never priced — valued at its buy / baseline price, no gain yet).
 
 Rules: facts and numbers only — never recommend buying, selling or rebalancing. Point out what stands out (a large share in one
 security, a loss, a stale manual price) as an observation.

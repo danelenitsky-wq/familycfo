@@ -62,7 +62,8 @@ export default function Investments() {
         {totals.errors > 0 && (
           <div className="card mt-4 flex items-center gap-2 border-warning/40 text-sm">
             <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
-            {totals.errors} ניירות לא התעדכנו ברענון האחרון — מוצג המחיר הקודם שלהם.
+            {totals.errors} ניירות לא התעדכנו ברענון האחרון — מוצג המחיר הקודם שלהם
+            {holdings.some(h => h.priceSource === 'cost') ? ', או מחיר הקנייה כשעוד לא היה מחיר.' : '.'}
           </div>
         )}
 
@@ -101,6 +102,8 @@ export default function Investments() {
                     {priceIn(h.price, h.currency)}
                     {h.priceSource === 'manual'
                       ? h.manualPriceDate && <div className="text-xs text-zinc-500">{day(h.manualPriceDate)}</div>
+                      : h.priceSource === 'cost'
+                      ? <div className="text-xs text-warning">אין מחיר · מוצג לפי העלות</div>
                       : <div className={cn('text-xs', toneOf(h.dayChangePct) || 'text-zinc-500')}>{h.dayChangePct == null ? 'לא נסחר היום' : signedPct(h.dayChangePct)}</div>}
                   </td>
                   <td className="whitespace-nowrap text-end">

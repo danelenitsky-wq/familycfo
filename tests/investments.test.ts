@@ -63,6 +63,29 @@ describe('investments', () => {
     expect(h.gainIls).toBe(500);
   });
 
+  it('values a holding that was never priced at its cost, without a gain', () => {
+    const db = testDb();
+    setRate(db, today(), 'USD', 3);
+    db.prepare(`INSERT INTO quotes (symbol, error, fetched_at) VALUES ('AAPL', 'HTTP 403', ?)`).run(new Date().toISOString());
+    quote(db, 'LUMI.TA', 'ILS', 75, 75);
+    holding(db, { symbol: 'AAPL', quantity: 10, currency: 'USD', buy_price: 200, owner_member_id: 1, broker: 'X' });
+    holding(db, { symbol: 'LUMI.TA', quantity: 100, currency: 'ILS', buy_price: 70, owner_member_id: 1, broker: 'X' });
+    holding(db, { symbol: 'NOPE', quantity: 5, currency: 'ILS' });
+
+    const p = portfolio(db);
+    const aapl = p.holdings.find(h => h.symbol === 'AAPL')!;
+    expect(aapl.priceSource).toBe('cost');
+    expect(aapl.price).toBeNull();
+    expect(aapl.valueIls).toBe(6000);           // 10 × $200 × 3
+    expect(aapl.gainIls).toBeNull();
+    expect(p.holdings.find(h => h.symbol === 'NOPE')!.priceSource).toBe('none');
+    expect(p.totals.valueIls).toBe(13500);      // 6000 + 7500
+    expect(p.totals.gainIls).toBe(500);         // only the priced holding
+    expect(p.totals.costIls).toBe(13000);       // 6000 + 7000
+    expect(p.totals.gainPct).toBe(7.14);        // 500 / 7000
+    expect(netWorth(db).items.find(i => i.id.startsWith('portfolio:X'))!.valueIls).toBe(13500);
+  });
+
   it('builds the value history from daily closes since each holding started', () => {
     const db = testDb();
     quote(db, 'VOO', 'ILS', 12, 11);
