@@ -42,7 +42,7 @@ Israeli bank scraper + local household-finance app for a family (members are con
 - Hebrew regexes can't use `\b` (JS word boundaries are ASCII-only) — use explicit lookaheads.
 
 **Configuration:**
-- Bank logins: copy `accounts.example.json` to `accounts.json` (git-ignored; `ACCOUNTS_FILE` overrides the path) — `accounts[]` with `companyId` (an israeli-bank-scrapers company id) and `credentials`; optional `categoryApiUrl` (POST `{description}` → `{category}`).
+- Bank logins: entered on the setup page (`/setup`, `src/server/routes/setup.ts`: members, logins with an owner member, start-over reset that backs up the DB first; the API reports only which credential fields are filled, never their values), or copy `accounts.example.json` to `accounts.json` (git-ignored; `ACCOUNTS_FILE` overrides the path) — `accounts[]` with `companyId` (an israeli-bank-scrapers company id) and `credentials`; optional `categoryApiUrl` (POST `{description}` → `{category}`).
 - Ports: `PORT` (API, 4310) and `WEB_PORT` (web, 5180).
 
 **Database:**

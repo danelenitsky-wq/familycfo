@@ -9,6 +9,7 @@ import { agentRoutes } from './agent.js';
 import { insuranceRoutes } from './routes/insurance.js';
 import { pensionRoutes } from './routes/pension.js';
 import { investmentRoutes } from './routes/investments.js';
+import { setupRoutes } from './routes/setup.js';
 import { setRate } from '../analytics/fx.js';
 
 const db = getDb();
@@ -79,6 +80,7 @@ agentRoutes(app, db);
 insuranceRoutes(app, db);
 pensionRoutes(app, db);
 investmentRoutes(app, db);
+setupRoutes(app, db);
 
 app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
   app.log.error(err);
