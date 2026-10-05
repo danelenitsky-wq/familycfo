@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { FileSpreadsheet, Upload } from 'lucide-react';
+import { FileSpreadsheet, Plus, Trash2, Upload } from 'lucide-react';
 import { read, set_cptable, utils } from 'xlsx';
 // Hebrew code pages (windows-1255) for old .xls files and CSVs saved from Excel
 import * as cptable from 'xlsx/dist/cpexcel.full.mjs';
 import { api } from '../api';
 import { MemberSelect } from './ui';
+import { useLookups } from '../state';
 import { COMPANY_LABELS } from './ScrapeButton';
 import { FIELD_LABELS, findHeader, toTransactions, type Cell, type Field, type Mapping } from '../lib/statement';
 import { money } from '../format';
@@ -27,16 +28,54 @@ async function readWorkbook(file: File) {
 
 const FIELDS: Field[] = ['date', 'description', 'amount', 'debit', 'credit', 'processedDate', 'originalAmount', 'currency', 'memo', 'installments'];
 
+interface EntryInit { key: number; companyId: string; label: string; ownerMemberId: number | null }
+let nextKey = 1;
+
 /**
- * Upload a statement file (Excel / CSV exported from the bank's or card company's website) instead of
- * connecting the account. The file is read here in the browser; only the parsed rows go to the local API.
+ * Upload statement files (Excel / CSV exported from the bank's or card company's website) instead of
+ * connecting the accounts: one entry per bank account or card. Accounts uploaded before are listed
+ * again, ready for next month's file. The file is read here in the browser; only the parsed rows go to
+ * the local API.
  */
 export function FileImport() {
+  const { meta } = useLookups();
+  const logins = useQuery({ queryKey: ['setup-logins'], queryFn: () => api.get<{ logins: { companyId: string; filled: Record<string, boolean> }[] }>('/setup/logins') });
+  const [entries, setEntries] = useState<EntryInit[]>([]);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current || !meta || !logins.data) return;
+    started.current = true;
+    // accounts of companies that aren't connected directly (no filled-in login) came from uploads
+    const connected = new Set(logins.data.logins.filter(l => Object.values(l.filled).every(Boolean)).map(l => l.companyId));
+    const uploaded = meta.accounts.filter(a => (a.kind === 'bank' || a.kind === 'card') && !connected.has(a.company))
+      .map(a => ({ key: nextKey++, companyId: a.company, label: a.id.slice(a.company.length + 1), ownerMemberId: a.ownerMemberId }));
+    setEntries(uploaded.length ? uploaded : [{ key: nextKey++, companyId: 'max', label: '', ownerMemberId: null }]);
+  }, [meta, logins.data]);
+
+  return (
+    <div className="space-y-3">
+      <p className="max-w-3xl text-sm leading-relaxed text-zinc-500">
+        היכנסו לאתר הבנק או חברת האשראי, הורידו את פירוט התנועות כקובץ אקסל או CSV, ובחרו אותו כאן. הקובץ נקרא בתוך המחשב שלכם בלבד.
+        העלאה חוזרת של אותו קובץ לא יוצרת כפילויות — אפשר להעלות כל חודש קובץ חדש.
+      </p>
+      {entries.map(e => (
+        <UploadEntry key={e.key} initial={e} onRemove={() => setEntries(es => es.filter(x => x.key !== e.key))} />
+      ))}
+      <button className="btn" onClick={() => setEntries(es => [...es, { key: nextKey++, companyId: 'max', label: '', ownerMemberId: null }])}>
+        <Plus />הוסף בנק או כרטיס
+      </button>
+    </div>
+  );
+}
+
+/** One bank account or card: its details, a file, the column mapping and a preview. */
+function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () => void }) {
   const qc = useQueryClient();
   const companies = useQuery({ queryKey: ['setup-companies'], queryFn: () => api.get<Company[]>('/setup/companies') });
-  const [companyId, setCompanyId] = useState('max');
-  const [label, setLabel] = useState('');
-  const [ownerMemberId, setOwnerMemberId] = useState<number | null>(null);
+  const [companyId, setCompanyId] = useState(initial.companyId);
+  const [label, setLabel] = useState(initial.label);
+  const [ownerMemberId, setOwnerMemberId] = useState<number | null>(initial.ownerMemberId);
   const [balance, setBalance] = useState('');
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState<Cell[][]>([]);
@@ -81,11 +120,7 @@ export function FileImport() {
   const cards = (companies.data ?? []).filter(c => c.kind === 'card');
 
   return (
-    <div className="space-y-4">
-      <p className="max-w-3xl text-sm leading-relaxed text-zinc-500">
-        היכנסו לאתר הבנק או חברת האשראי, הורידו את פירוט התנועות כקובץ אקסל או CSV, ובחרו אותו כאן. הקובץ נקרא בתוך המחשב שלכם בלבד.
-        העלאה חוזרת של אותו קובץ לא יוצרת כפילויות — אפשר להעלות כל חודש קובץ חדש.
-      </p>
+    <div className="space-y-3 rounded-lg border border-line p-3">
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-44"><span className="label">בנק / כרטיס</span>
           <select className="input" value={companyId} onChange={e => setCompanyId(e.target.value)}>
@@ -108,12 +143,15 @@ export function FileImport() {
           <FileSpreadsheet />{fileName || 'בחירת קובץ'}
           <input type="file" className="sr-only" accept=".xlsx,.xls,.csv" onChange={e => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
         </label>
+        <button className="btn-ghost btn-icon ms-auto text-rose-600" aria-label="הסר מהרשימה" title="הסר מהרשימה (התנועות שכבר הועלו נשארות)" onClick={onRemove}>
+          <Trash2 className="h-4 w-4" />
+        </button>
       </div>
 
       {error && <p className="text-sm text-amber-700 dark:text-amber-400">{error}</p>}
 
       {rows.length > 0 && (
-        <div className="space-y-3 rounded-lg border border-line p-3">
+        <div className="space-y-3 border-t border-line-soft pt-3">
           <div className="flex flex-wrap items-end gap-2">
             <label className="w-28"><span className="label">שורת כותרות</span>
               <input className="input num" type="number" min={1} max={rows.length} value={headerIndex + 1}
