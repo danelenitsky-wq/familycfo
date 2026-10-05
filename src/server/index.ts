@@ -10,6 +10,7 @@ import { insuranceRoutes } from './routes/insurance.js';
 import { pensionRoutes } from './routes/pension.js';
 import { investmentRoutes } from './routes/investments.js';
 import { setupRoutes } from './routes/setup.js';
+import { importRoutes } from './routes/import.js';
 import { setRate } from '../analytics/fx.js';
 
 const db = getDb();
@@ -56,7 +57,7 @@ app.get('/api/meta', async () => ({
 
 app.put('/api/settings', async req => {
   const body = req.body as Record<string, string | number>;
-  const allowed = ['cycle_start_day', 'balance_buffer'];
+  const allowed = ['cycle_start_day', 'balance_buffer', 'data_source'];
   const upsert = db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
   for (const [k, v] of Object.entries(body)) if (allowed.includes(k)) upsert.run(k, String(v));
   return { ok: true };
@@ -81,6 +82,7 @@ insuranceRoutes(app, db);
 pensionRoutes(app, db);
 investmentRoutes(app, db);
 setupRoutes(app, db);
+importRoutes(app, db);
 
 app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
   app.log.error(err);

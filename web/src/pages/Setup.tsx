@@ -1,10 +1,12 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CloudDownload, KeyRound, Plus, RotateCcw, Save, SlidersHorizontal, Trash2, Users, Wand2 } from 'lucide-react';
+import { CloudDownload, FileSpreadsheet, KeyRound, Plug, Plus, RotateCcw, Save, Shuffle, SlidersHorizontal, Trash2, Users, Wand2 } from 'lucide-react';
 import { api } from '../api';
 import { useLookups } from '../state';
 import { MemberSelect, PageHeader } from '../components/ui';
 import { COMPANY_LABELS, ScrapeButton } from '../components/ScrapeButton';
+import { FileImport } from '../components/FileImport';
+import { cn } from '@/lib/utils';
 
 interface Company { id: string; name: string; kind: 'bank' | 'card'; fields: string[] }
 interface SavedLogin { index: number; companyId: string; ownerMemberId: number | null; filled: Record<string, boolean> }
@@ -17,13 +19,20 @@ const FIELD_LABELS: Record<string, string> = {
 const isSecret = (f: string) => f === 'password';
 let nextKey = 1;
 
+type Source = 'connect' | 'upload' | 'both';
+const SOURCES: { value: Source; title: string; text: string; icon: ComponentType<{ className?: string }> }[] = [
+  { value: 'connect', title: 'חיבור ישיר', icon: Plug, text: 'מזינים פעם אחת את פרטי הכניסה, והאפליקציה מורידה את התנועות לבד בלחיצת כפתור.' },
+  { value: 'upload', title: 'העלאת קבצים בלבד', icon: FileSpreadsheet, text: 'בלי לתת סיסמאות: מורידים מאתר הבנק / האשראי קובץ אקסל ומעלים אותו כאן.' },
+  { value: 'both', title: 'שילוב', icon: Shuffle, text: 'חלק מהחשבונות בחיבור ישיר וחלק בהעלאת קבצים.' },
+];
+
 export default function Setup() {
   const qc = useQueryClient();
   const { meta } = useLookups();
   const refreshAll = () => qc.invalidateQueries();
 
   const companies = useQuery({ queryKey: ['setup-companies'], queryFn: () => api.get<Company[]>('/setup/companies') });
-  const saved = useQuery({ queryKey: ['setup-logins'], queryFn: () => api.get<{ exists: boolean; ready: boolean; logins: SavedLogin[] }>('/setup/logins') });
+  const saved = useQuery({ queryKey: ['setup-logins'], queryFn: () => api.get<{ exists: boolean; ready: boolean; canScrape: boolean; logins: SavedLogin[] }>('/setup/logins') });
 
   // ---- members
   const patchMember = useMutation({ mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) => api.patch(`/members/${id}`, body), onSuccess: refreshAll });
@@ -56,6 +65,7 @@ export default function Setup() {
   });
 
   if (!meta) return null;
+  const source = (meta.settings.data_source as Source | undefined) ?? 'connect';
   const banks = (companies.data ?? []).filter(c => c.kind === 'bank');
   const cards = (companies.data ?? []).filter(c => c.kind === 'card');
 
@@ -97,7 +107,20 @@ export default function Setup() {
         {removeMember.error && <p className="mt-2 text-sm text-rose-600">{(removeMember.error as Error).message}</p>}
       </Step>
 
-      <Step n={3} title="חשבונות וכרטיסים" icon={KeyRound} color="var(--chart-2)"
+      <Step n={3} title="איך להביא את הנתונים?" icon={Shuffle} color="var(--chart-5)" subtitle="אפשר לשנות את הבחירה בכל זמן.">
+        <div role="radiogroup" className="grid max-w-4xl gap-2 sm:grid-cols-3">
+          {SOURCES.map(o => (
+            <button key={o.value} type="button" role="radio" aria-checked={source === o.value}
+              className={cn('rounded-lg border p-3 text-start transition-colors', source === o.value ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-line hover:bg-zinc-50 dark:hover:bg-zinc-800/50')}
+              onClick={() => saveSettings.mutate({ data_source: o.value })}>
+              <div className="flex items-center gap-2 font-semibold"><o.icon className="h-4 w-4 text-primary" />{o.title}</div>
+              <div className="mt-1 text-xs leading-relaxed text-zinc-500">{o.text}</div>
+            </button>
+          ))}
+        </div>
+      </Step>
+
+      {source !== 'upload' && <Step n={4} title="חיבור ישיר לבנקים ולכרטיסים" icon={KeyRound} color="var(--chart-2)"
         subtitle="הוסיפו כל בנק וחברת אשראי, בחרו של מי הם והקלידו את פרטי הכניסה. הפרטים נשמרים רק במחשב הזה (בקובץ accounts.json) ולא מוצגים שוב — כדי לא לשנות סיסמה שמורה, השאירו את השדה ריק.">
         <div className="space-y-3">
           {rows.map(r => (
@@ -139,9 +162,18 @@ export default function Setup() {
           {!dirty && saveLogins.isSuccess && <span className="text-sm text-emerald-700 dark:text-emerald-400">נשמר ✓</span>}
           {saveLogins.error && <span className="text-sm text-rose-600">{(saveLogins.error as Error).message}</span>}
         </div>
-      </Step>
+        <div className="mt-5 border-t border-line-soft pt-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><CloudDownload className="h-4 w-4" />הורדת הנתונים</div>
+          <p className="mb-3 max-w-3xl text-sm text-zinc-500">לחיצה פותחת חלון דפדפן לכל בנק ומורידה 3 חודשים אחורה. אם הבנק שולח קוד ב-SMS, יופיע שדה להקליד אותו.</p>
+          {saved.data?.canScrape ? <ScrapeButton /> : <p className="text-sm text-zinc-500">קודם מלאו ושמרו לפחות בנק או כרטיס אחד.</p>}
+        </div>
+      </Step>}
 
-      <Step n={4} title="הגדרות כלליות" icon={SlidersHorizontal} color="var(--chart-1)">
+      {source !== 'connect' && <Step n={source === 'upload' ? 4 : 5} title="העלאת קבצים" icon={FileSpreadsheet} color="var(--chart-3)">
+        <FileImport />
+      </Step>}
+
+      <Step n={source === 'both' ? 6 : 5} title="הגדרות כלליות" icon={SlidersHorizontal} color="var(--chart-1)">
         <div className="grid max-w-4xl gap-4 sm:grid-cols-3">
           <label className="block">
             <span className="label">יום תחילת מחזור חודשי</span>
@@ -157,10 +189,6 @@ export default function Setup() {
         </div>
       </Step>
 
-      <Step n={5} title="הורדת הנתונים" icon={CloudDownload} color="var(--chart-3)"
-        subtitle="לחיצה פותחת חלון דפדפן לכל בנק ומורידה 3 חודשים אחורה. אם הבנק שולח קוד ב-SMS, יופיע כאן שדה להקליד אותו. אחר כך — בעמוד ״הגדרות״ אפשר לקבוע מאיזה חשבון משולם כל כרטיס.">
-        {saved.data?.ready ? <ScrapeButton /> : <p className="text-sm text-zinc-500">קודם מלאו ושמרו לפחות בנק או כרטיס אחד בשלב 3.</p>}
-      </Step>
     </>
   );
 }

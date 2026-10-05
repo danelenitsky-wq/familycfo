@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import {
   ArrowLeftRight, ChartColumn, Bell, Briefcase, CalendarCheck, Home, Layers, LayoutDashboard, Lightbulb, Menu, PieChart,
-  ChartCandlestick, Settings2, Wand2, ShieldCheck, Tags, TrendingUp, Umbrella, Wallet, X, type LucideIcon,
+  ChartCandlestick, FileUp, Settings2, Wand2, ShieldCheck, Tags, TrendingUp, Umbrella, Wallet, X, type LucideIcon,
 } from 'lucide-react';
 import { api, type Alert } from './api';
 import { useFilters, useMeta } from './state';
@@ -25,6 +25,7 @@ import Insurance from './pages/Insurance';
 import Pension from './pages/Pension';
 import Investments from './pages/Investments';
 import Setup from './pages/Setup';
+import ImportPage from './pages/Import';
 import { Picker, Segmented } from './components/ui';
 import { AgentChat } from './components/AgentChat';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/kit/tooltip';
@@ -47,6 +48,7 @@ const NAV: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/loans', label: 'הלוואות ומשכנתא', icon: Home },
   { to: '/insurance', label: 'ביטוחים', icon: ShieldCheck },
   { to: '/categories', label: 'קטגוריות', icon: Layers },
+  { to: '/import', label: 'העלאת קובץ', icon: FileUp },
   { to: '/settings', label: 'הגדרות', icon: Settings2 },
   { to: '/setup', label: 'הגדרה ראשונית', icon: Wand2 },
 ];
@@ -252,6 +254,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<FirstRunGate />} />
               <Route path="/setup" element={<Setup />} />
+              <Route path="/import" element={<ImportPage />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/fixed" element={<Fixed />} />
               <Route path="/budgets" element={<Budgets />} />

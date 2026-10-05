@@ -57,8 +57,10 @@ export function setupRoutes(app: FastifyInstance, db: DB) {
       index, companyId: a.companyId, ownerMemberId: a.ownerMemberId ?? null,
       filled: Object.fromEntries(fieldsOf(a.companyId).map(f => [f, !isPlaceholder(a.credentials?.[f])])) as Record<string, boolean>,
     }));
-    // ready = at least one login is fully filled in, so a scrape can run
-    return { exists: !!config, ready: logins.some(l => Object.values(l.filled).every(Boolean)), logins };
+    // ready = a scrape can run (a login is fully filled in) or data was already uploaded / scraped
+    const hasData = !!db.prepare(`SELECT 1 FROM accounts WHERE kind IN ('bank', 'card') LIMIT 1`).get();
+    const canScrape = logins.some(l => Object.values(l.filled).every(Boolean));
+    return { exists: !!config, ready: hasData || canScrape, canScrape, logins };
   });
 
   // replace the whole list; an empty field keeps the saved value of the login it came from (keepFrom)
