@@ -5,11 +5,11 @@ import { read, set_cptable, utils } from 'xlsx';
 // Hebrew code pages (windows-1255) for old .xls files and CSVs saved from Excel
 import * as cptable from 'xlsx/dist/cpexcel.full.mjs';
 import { api } from '../api';
-import { MemberSelect } from './ui';
+import { MemberSelect, Money } from './ui';
 import { useLookups } from '../state';
 import { COMPANY_LABELS } from './ScrapeButton';
 import { FIELD_LABELS, findHeader, latestBalance, toTransactions, type Cell, type Field, type Mapping } from '../lib/statement';
-import { money } from '../format';
+import { day, money } from '../format';
 
 interface Company { id: string; name: string; kind: 'bank' | 'card' }
 interface ImportResult { accountId: string; rows: number; inserted: number; updated: number }
@@ -44,19 +44,23 @@ let nextKey = 1;
  */
 export function FileImport() {
   const { meta } = useLookups();
-  const logins = useQuery({ queryKey: ['setup-logins'], queryFn: () => api.get<{ logins: { companyId: string; filled: Record<string, boolean> }[] }>('/setup/logins') });
+  const logins = useQuery({ queryKey: ['setup-logins'], queryFn: () => api.get<{ logins: { companyId: string; ownerMemberId: number | null; filled: Record<string, boolean> }[] }>('/setup/logins') });
+  const history = useQuery({ queryKey: ['import-history'], queryFn: () => api.get<UploadRecord[]>('/import/history') });
   const [entries, setEntries] = useState<EntryInit[]>([]);
   const started = useRef(false);
 
   useEffect(() => {
-    if (started.current || !meta || !logins.data) return;
+    if (started.current || !meta || !logins.data || !history.data) return;
     started.current = true;
-    // accounts of companies that aren't connected directly (no filled-in login) came from uploads
-    const connected = new Set(logins.data.logins.filter(l => Object.values(l.filled).every(Boolean)).map(l => l.companyId));
-    const uploaded = meta.accounts.filter(a => (a.kind === 'bank' || a.kind === 'card') && !connected.has(a.company))
+    // accounts that files were uploaded to, plus accounts no filled-in login of the same owner covers
+    const SHARED = 3;
+    const connected = new Set(logins.data.logins.filter(l => Object.values(l.filled).every(Boolean)).map(l => `${l.companyId}|${l.ownerMemberId ?? SHARED}`));
+    const fromUploads = new Set(history.data.map(u => u.accountId));
+    const uploaded = meta.accounts.filter(a => (a.kind === 'bank' || a.kind === 'card')
+      && (fromUploads.has(a.id) || !connected.has(`${a.company}|${a.ownerMemberId ?? SHARED}`)))
       .map(a => ({ key: nextKey++, companyId: a.company, label: a.id.slice(a.company.length + 1), ownerMemberId: a.ownerMemberId }));
     setEntries(uploaded.length ? uploaded : [{ key: nextKey++, companyId: 'max', label: '', ownerMemberId: null }]);
-  }, [meta, logins.data]);
+  }, [meta, logins.data, history.data]);
 
   return (
     <div className="space-y-3">
@@ -116,7 +120,7 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
 
   const upload = useMutation({
     mutationFn: () => api.post<ImportResult>('/import', {
-      companyId, accountLabel: label, ownerMemberId, balance: balance.trim() ? Number(balance) : fileBalance, rows: parsed!.rows,
+      companyId, accountLabel: label, ownerMemberId, balance: balance.trim() ? Number(balance) : fileBalance, fileName, rows: parsed!.rows,
     }),
     onSuccess: () => qc.invalidateQueries(),
   });
@@ -155,6 +159,8 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
+
+      <UploadHistory accountId={`${companyId}:${label.trim().replace(/[:\s]+/g, '-')}`} />
 
       {error && <p className="text-sm text-amber-700 dark:text-amber-400">{error}</p>}
 
@@ -219,4 +225,39 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
       )}
     </div>
   );
+}
+
+interface UploadRecord {
+  id: number; accountId: string; accountName: string | null; fileName: string | null; uploadedAt: string;
+  rows: number; inserted: number; fromDate: string | null; toDate: string | null; balance: number | null;
+}
+
+/** The files uploaded to one account so far (kept in the database), newest first. */
+function UploadHistory({ accountId }: { accountId: string }) {
+  const history = useQuery({ queryKey: ['import-history'], queryFn: () => api.get<UploadRecord[]>('/import/history') });
+  const mine = (history.data ?? []).filter(u => u.accountId === accountId);
+  if (!mine.length) return null;
+  return (
+    <div className="rounded-md bg-muted/40 px-3 py-2 text-xs">
+      <div className="mb-1 font-semibold">קבצים שהועלו לחשבון הזה</div>
+      <ul className="space-y-0.5">
+        {mine.map(u => (
+          <li key={u.id} className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            <span className="text-foreground">{u.fileName ?? 'קובץ'}</span>
+            <span>· הועלה {uploadedAt(u.uploadedAt)}</span>
+            {u.fromDate && u.toDate && <span>· תנועות {day(u.fromDate)} – {day(u.toDate)}</span>}
+            <span>· {u.rows} תנועות{u.inserted < u.rows ? ` (${u.inserted} חדשות)` : ''}</span>
+            {u.balance != null && <span>· יתרה <Money value={u.balance} /></span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** "2026-10-06 10:31:03" (UTC, from SQLite) → local date and time. */
+function uploadedAt(utc: string): string {
+  const d = new Date(`${utc.replace(' ', 'T')}Z`);
+  return d.toLocaleString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }

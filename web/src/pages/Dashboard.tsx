@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { CreditCard, Gauge as GaugeIcon, Landmark, LayoutDashboard, PiggyBank, Receipt, Sparkles, TriangleAlert, Users, Wallet } from 'lucide-react';
+import { CalendarRange, CreditCard, Gauge as GaugeIcon, Landmark, LayoutDashboard, PiggyBank, Receipt, Sparkles, TriangleAlert, Users, Wallet } from 'lucide-react';
 import { api, qs, type CycleSummary, type InstallmentPlan, type Summary } from '../api';
-import { useFilters, useLookups, usePeriod } from '../state';
+import { PERIOD_OPTIONS, useFilters, useLookups, usePeriod } from '../state';
 import { day, monthName, periodName as periodLabel } from '../format';
 import { ErrorBox, Loading, MemberBadge, Money, MoreLink, PageHeader, Progress, SectionTitle, SeverityDot, Stat } from '../components/ui';
 import { BarList, CashflowBars, DonutChart, ForecastChart, Gauge } from '../components/charts';
@@ -48,6 +48,9 @@ export default function Dashboard() {
   const avgSpend = past.length ? past.reduce((s, h) => s + h.spend, 0) / past.length : 0;
   // a single month against the average month (the whole period has no single month to compare)
   const spendDelta = !isRange && avgSpend > 0 ? { value: cycle.spend / avgSpend - 1, label: 'מול הממוצע', positiveIsGood: false } : undefined;
+  // the forecast runs to the end of the chosen period (a month to a year ahead)
+  const periodEnd = forecast.total.points?.at(-1);
+  const periodLength = PERIOD_OPTIONS.find(o => o.months === period.months)?.label ?? `${period.months} חודשים`;
   const balanceSpark = (forecast.total.points ?? []).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 20)) === 0).map(p => p.expected);
 
   const members = Object.entries(cycle.byMember).map(([id, v]) => ({ id: Number(id), ...v })).filter(m => m.spend > 0 || m.income > 0);
@@ -58,21 +61,24 @@ export default function Dashboard() {
     <>
       <PageHeader title="סקירה" icon={LayoutDashboard} subtitle={`${isRange ? 'כל התקופה' : 'מחזור'} ${periodLabel(cycle.cycle.key)} · ${day(cycle.cycle.start)} – ${day(cycle.cycle.end)}`} actions={<ScrapeButton />} />
 
-      <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <Stat index={0} icon={Landmark} color="var(--chart-5)" label="יתרה בבנקים עכשיו" value={bankTotal} tone={bankTotal < 0 ? 'bad' : undefined}
           spark={balanceSpark} hint={forecast.total.stale ? 'חלק מהיתרות לא עודכנו לאחרונה' : undefined} />
         <Stat index={1} icon={GaugeIcon} label={`יתרה צפויה בסוף ${periodName}`} value={forecast.total.endOfCycle}
           tone={forecast.total.endOfCycle < forecast.buffer ? 'bad' : 'good'} spark={balanceSpark}
           hint={<>נקודה נמוכה: <Money value={forecast.total.lowest.amount} /> ב-{day(forecast.total.lowest.date)}</>} />
-        <Stat index={2} icon={Receipt} color="var(--chart-3)" label={isRange ? 'הוצאות בתקופה' : 'הוצאות המחזור'} value={cycle.spend} delta={spendDelta}
+        <Stat index={2} icon={CalendarRange} color="var(--chart-4)" label={`יתרה צפויה בסוף התקופה (${periodLength})`}
+          value={periodEnd?.expected ?? forecast.total.endOfCycle} tone={(periodEnd?.expected ?? 0) < forecast.buffer ? 'bad' : 'good'}
+          spark={balanceSpark} hint={periodEnd ? <>ב-{day(periodEnd.date)} · כל הבנקים יחד</> : undefined} />
+        <Stat index={3} icon={Receipt} color="var(--chart-3)" label={isRange ? 'הוצאות בתקופה' : 'הוצאות המחזור'} value={cycle.spend} delta={spendDelta}
           spark={hist.length > 1 ? hist.map(h => h.spend) : undefined}
           hint={<Link to="/fixed" className="hover:underline">קבועות <Money value={cycle.fixed} /> · משתנות <Money value={cycle.dynamic} /> ←</Link>} />
         {capacity.monthlyCapacity >= 0 ? (
-          <Stat index={3} icon={PiggyBank} label="עודף חודשי ממוצע (לחיסכון)" value={capacity.monthlyCapacity} tone="good"
+          <Stat index={4} icon={PiggyBank} label="עודף חודשי ממוצע (לחיסכון)" value={capacity.monthlyCapacity} tone="good"
             spark={hist.length > 1 ? hist.map(h => h.net) : undefined}
             hint={<>ממוצע {capacity.monthsUsed.length} חודשים: הכנסה <Money value={capacity.expectedIncome} /> פחות הוצאות <Money value={capacity.expectedIncome - capacity.monthlyCapacity} /></>} />
         ) : (
-          <Stat index={3} icon={PiggyBank} label="גירעון חודשי ממוצע" value={capacity.monthlyCapacity} tone="bad"
+          <Stat index={4} icon={PiggyBank} label="גירעון חודשי ממוצע" value={capacity.monthlyCapacity} tone="bad"
             spark={hist.length > 1 ? hist.map(h => h.net) : undefined} hint={`בממוצע ${capacity.monthsUsed.length} החודשים האחרונים ההוצאות גבוהות מההכנסה`} />
         )}
       </div>
