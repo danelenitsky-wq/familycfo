@@ -8,7 +8,7 @@ import { api } from '../api';
 import { MemberSelect } from './ui';
 import { useLookups } from '../state';
 import { COMPANY_LABELS } from './ScrapeButton';
-import { FIELD_LABELS, findHeader, toTransactions, type Cell, type Field, type Mapping } from '../lib/statement';
+import { FIELD_LABELS, findHeader, latestBalance, toTransactions, type Cell, type Field, type Mapping } from '../lib/statement';
 import { money } from '../format';
 
 interface Company { id: string; name: string; kind: 'bank' | 'card' }
@@ -19,14 +19,19 @@ set_cptable(cptable);
 /** Excel files carry their own encoding; a CSV is UTF-8 or (saved from Hebrew Excel) windows-1255. */
 async function readWorkbook(file: File) {
   const buf = await file.arrayBuffer();
-  if (!/\.(csv|txt)$/i.test(file.name)) return read(buf, { cellDates: true });
-  let csv: string;
-  try { csv = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { csv = new TextDecoder('windows-1255').decode(buf); }
+  // real Excel files: .xlsx is a zip ("PK"), old .xls a compound file (D0 CF 11 E0)
+  const head = new Uint8Array(buf.slice(0, 4));
+  const binary = (head[0] === 0x50 && head[1] === 0x4b) || (head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0);
+  if (binary) return read(buf, { cellDates: true });
+  // anything else is text: a CSV, or an HTML table saved as ".xls" (Leumi, Hapoalim and others export that way)
+  let text: string;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = new TextDecoder('windows-1255').decode(buf); }
+  text = text.replace(/^\uFEFF/, '').trimStart();
   // raw: keep "05/10/2026" as text so it is read day-first, not as a US date
-  return read(csv.replace(/^\uFEFF/, ''), { type: 'string', raw: true });
+  return read(text, { type: 'string', raw: true });
 }
 
-const FIELDS: Field[] = ['date', 'description', 'amount', 'debit', 'credit', 'processedDate', 'originalAmount', 'currency', 'memo', 'installments'];
+const FIELDS: Field[] = ['date', 'description', 'amount', 'debit', 'credit', 'processedDate', 'originalAmount', 'currency', 'memo', 'installments', 'balance'];
 
 interface EntryInit { key: number; companyId: string; label: string; ownerMemberId: number | null }
 let nextKey = 1;
@@ -86,6 +91,8 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
 
   const kind = companies.data?.find(c => c.id === companyId)?.kind ?? 'card';
   const parsed = rows.length ? toTransactions(rows, headerIndex, mapping, expensesPositive) : null;
+  // a bank statement's running balance gives the account's current balance (unless typed in)
+  const fileBalance = kind === 'bank' && parsed ? latestBalance(parsed.rows) : null;
 
   async function onFile(file: File | undefined) {
     setError(''); setRows([]); upload.reset();
@@ -109,7 +116,7 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
 
   const upload = useMutation({
     mutationFn: () => api.post<ImportResult>('/import', {
-      companyId, accountLabel: label, ownerMemberId, balance: balance.trim() ? Number(balance) : null, rows: parsed!.rows,
+      companyId, accountLabel: label, ownerMemberId, balance: balance.trim() ? Number(balance) : fileBalance, rows: parsed!.rows,
     }),
     onSuccess: () => qc.invalidateQueries(),
   });
@@ -136,7 +143,8 @@ function UploadEntry({ initial, onRemove }: { initial: EntryInit; onRemove: () =
         </label>
         {kind === 'bank' && (
           <label className="w-40"><span className="label">יתרה נוכחית (לא חובה)</span>
-            <input className="input num" type="number" step="0.01" value={balance} onChange={e => setBalance(e.target.value)} />
+            <input className="input num" type="number" step="0.01" value={balance} onChange={e => setBalance(e.target.value)}
+              placeholder={fileBalance != null ? `${fileBalance} (מהקובץ)` : ''} />
           </label>
         )}
         <label className="btn cursor-pointer">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findHeader, parseAmount, parseDate, toTransactions } from '../web/src/lib/statement';
+import { findHeader, latestBalance, parseAmount, parseDate, toTransactions } from '../web/src/lib/statement';
 
 describe('statement file parsing', () => {
   it('reads dates and amounts in the formats bank exports use', () => {
@@ -46,5 +46,10 @@ describe('statement file parsing', () => {
     expect(header.mapping).toMatchObject({ date: 0, description: 1, debit: 3, credit: 4 });
     const { rows: tx } = toTransactions(rows, header.index, header.mapping, false);
     expect(tx.map(t => t.amount)).toEqual([15000, -420.1]);
+    expect(header.mapping.balance).toBe(5);
+    expect(latestBalance(tx)).toBe(19579.9);
+    // newest-first files: the first row of the newest day
+    const desc = toTransactions([rows[0], rows[2], rows[1]], 0, header.mapping, false).rows;
+    expect(latestBalance(desc)).toBe(19579.9);
   });
 });

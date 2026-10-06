@@ -201,10 +201,12 @@ export function analyticsRoutes(app: FastifyInstance, db: DB): void {
   }));
   // body { months }: how far back to fetch (1 / 3 / 6 / 12); also remembered as the period the app shows
   app.post('/api/scrape', async req => {
-    const months = Number((req.body as { months?: number } | null)?.months);
+    const body = req.body as { months?: number; memberIds?: unknown } | null;
+    const months = Number(body?.months);
+    const memberIds = Array.isArray(body?.memberIds) ? body.memberIds.map(Number).filter(Number.isInteger) : undefined;
     const monthsBack = [1, 3, 6, 12].includes(months) ? months : undefined;
     if (monthsBack) db.prepare(`INSERT INTO settings (key, value) VALUES ('view_months', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(monthsBack));
-    return startScrape(db, monthsBack);
+    return startScrape(db, monthsBack, memberIds);
   });
   app.post('/api/scrape/otp', async req => {
     submitOtp(String((req.body as { code?: unknown })?.code ?? '').trim());

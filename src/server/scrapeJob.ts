@@ -1,6 +1,7 @@
 import type { DB } from '../db/connection.js';
 import { scrapeAll } from '../scraper.js';
 import { runPipeline } from '../pipeline.js';
+import { SHARED_MEMBER_ID } from '../analytics/common.js';
 // reads the bank credentials file; the credentials go only to the scraper and are never returned by the API
 import { loadConfig } from '../config.js';
 
@@ -43,13 +44,18 @@ const setCompany = (company: string, patch: Partial<ScrapeCompanyState>) => {
   state.companies = state.companies.map(c => (c.company === company ? { ...c, ...patch } : c));
 };
 
-export function startScrape(db: DB, monthsBack?: number): ScrapeJobState {
+/** memberIds: scrape only the logins of these household members (a login without an owner is the shared member's) */
+export function startScrape(db: DB, monthsBack?: number, memberIds?: number[]): ScrapeJobState {
   if (scrapeRunning()) throw Object.assign(new Error('a scrape is already running'), { statusCode: 409 });
   let config: ReturnType<typeof loadConfig>;
   try {
     config = loadConfig();
   } catch {
     throw Object.assign(new Error('the scraper configuration is missing or invalid (see accounts.example.json)'), { statusCode: 400 });
+  }
+  if (memberIds?.length) {
+    config = { ...config, accounts: config.accounts.filter(a => memberIds.includes(a.ownerMemberId ?? SHARED_MEMBER_ID)) };
+    if (!config.accounts.length) throw Object.assign(new Error('לבני הבית שנבחרו אין חשבונות בחיבור ישיר — את הנתונים שלהם מעדכנים בהעלאת קובץ'), { statusCode: 400 });
   }
   const only = process.env.SCRAPE_ONLY?.split(',').map(s => s.trim()).filter(Boolean);
   state = {

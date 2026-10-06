@@ -5,18 +5,21 @@
  */
 
 export type Cell = string | number | boolean | Date | null | undefined;
-export type Field = 'date' | 'processedDate' | 'description' | 'amount' | 'debit' | 'credit' | 'originalAmount' | 'currency' | 'memo' | 'installments';
+export type Field = 'date' | 'processedDate' | 'description' | 'amount' | 'debit' | 'credit' | 'originalAmount' | 'currency' | 'memo' | 'installments' | 'balance';
 export type Mapping = Partial<Record<Field, number>>;
 
 export interface StatementRow {
   date: string; processedDate: string | null; description: string; amount: number;
   originalAmount: number | null; currency: string | null; memo: string | null;
   installmentNumber: number | null; installmentTotal: number | null;
+  /** the account balance after this row (bank statements have a running balance column) */
+  balance: number | null;
 }
 
 export const FIELD_LABELS: Record<Field, string> = {
   date: 'תאריך עסקה', processedDate: 'תאריך חיוב', description: 'תיאור / בית עסק', amount: 'סכום (עמודה אחת)',
   debit: 'חובה (הוצאה)', credit: 'זכות (הכנסה)', originalAmount: 'סכום מקורי', currency: 'מטבע', memo: 'הערות', installments: 'תשלומים',
+  balance: 'יתרה',
 };
 
 // header words per field, most specific first (checked in this order, so "תאריך חיוב" wins over "תאריך")
@@ -30,8 +33,22 @@ const HINTS: [Field, RegExp][] = [
   ['currency', /מטבע|currency/i],
   ['installments', /תשלום|installment/i],
   ['description', /בית\s*(ה)?עסק|תיאור|תאור|פרטים|הפעולה|description|merchant/i],
+  ['balance', /יתרה|balance/i],
   ['memo', /הערות|פירוט|אסמכתא|memo|notes/i],
 ];
+
+/**
+ * The account's current balance from a statement's running-balance column: the balance on the newest
+ * row. Statements list rows newest-first or oldest-first; within the newest day the row at that end wins.
+ */
+export function latestBalance(rows: StatementRow[]): number | null {
+  const withBalance = rows.filter(r => r.balance != null);
+  if (!withBalance.length) return null;
+  const newestFirst = withBalance[0].date >= withBalance[withBalance.length - 1].date;
+  const ordered = newestFirst ? withBalance : [...withBalance].reverse();
+  const newest = ordered.reduce((best, r) => (r.date > best.date ? r : best), ordered[0]);
+  return newest.balance;
+}
 
 const text = (c: Cell) => (c == null ? '' : c instanceof Date ? c.toISOString() : String(c)).trim();
 
@@ -140,6 +157,7 @@ export function toTransactions(rows: Cell[][], headerIndex: number, m: Mapping, 
       memo: m.memo != null ? text(r[m.memo]) || null : null,
       installmentNumber: inst ? Number(inst[1]) : null,
       installmentTotal: inst ? Number(inst[2]) : null,
+      balance: m.balance != null ? parseAmount(r[m.balance]) : null,
     });
   }
   return { rows: out, skipped };
