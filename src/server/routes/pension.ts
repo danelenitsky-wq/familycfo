@@ -41,7 +41,9 @@ export function pensionRoutes(app: FastifyInstance, db: DB): void {
     return {
       products,
       report: reports[0] ?? null,
-      reports: reports.map(r => ({ id: r.id, asOf: r.asOf, source: r.source, memberId: r.memberId })),
+      // every imported report: what was imported and when (the page lists them)
+      reports: reports.map(r => ({ id: r.id, asOf: r.asOf, source: r.source, memberId: r.memberId, importedAt: r.importedAt,
+        fileName: r.originalName ?? (r.filePath ? String(r.filePath).split('/').pop() : null), totalSavings: r.summary?.totalSavings ?? null })),
       totals: {
         value: sum(products, value),
         byType: Object.fromEntries(TYPES.map(t => [t, sum(products.filter(p => p.type === t), value)])),

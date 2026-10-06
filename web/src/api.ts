@@ -110,6 +110,7 @@ export interface ScheduledItem {
 export interface NetWorthItem {
   id: string; name: string; group: 'bank' | 'asset' | 'card_debt' | 'liability'; type: string; ownerMemberId: number | null;
   provider: string | null; currency: string; value: number; valueIls: number; asOf: string | null; liquidityDate: string | null;
+  liquid?: boolean;
 }
 export interface NetWorth {
   asOf: string; items: NetWorthItem[]; totals: { assets: number; liabilities: number; netWorth: number; liquid: number };
@@ -216,6 +217,7 @@ export interface PensionReportSummary {
 export interface PensionOverview {
   products: PensionProduct[];
   report: { id: number; asOf: string; source: string; memberId: number | null; documentPath: string | null; summary: PensionReportSummary } | null;
+  reports: { id: number; asOf: string; source: string; memberId: number | null; importedAt: string; fileName: string | null; totalSavings: number | null }[];
   totals: {
     value: number; byType: Record<string, number>; monthlyDeposits: number; expectedAnnuity: number; active: number;
     inactive: { count: number; value: number }; liquidStudyFunds: { count: number; value: number };
