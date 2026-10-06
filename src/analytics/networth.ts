@@ -16,6 +16,8 @@ export interface NetWorthItem {
   valueIls: number;
   asOf: string | null;
   liquidityDate: string | null;
+  /** counted in "liquid" (available today) */
+  liquid?: boolean;
 }
 
 export interface NetWorth {
@@ -92,9 +94,10 @@ export function netWorth(db: DB, asOf = today()): NetWorth {
   const assetsTotal = items.filter(i => i.valueIls > 0).reduce((s, i) => s + i.valueIls, 0);
   const liabilitiesTotal = items.filter(i => i.valueIls < 0).reduce((s, i) => s + i.valueIls, 0);
   // pension and real estate are never liquid; a provident fund (gemel) only from the date it's set to
-  const liquid = items.filter(i => i.group === 'bank' || (i.group === 'asset' && (!i.liquidityDate || i.liquidityDate <= asOf)
-    && !['pension', 'real_estate'].includes(i.type) && !(i.type === 'kupat_gemel' && !i.liquidityDate)))
-    .reduce((s, i) => s + i.valueIls, 0);
+  const isLiquid = (i: NetWorthItem) => i.group === 'bank' || (i.group === 'asset' && (!i.liquidityDate || i.liquidityDate <= asOf)
+    && !['pension', 'real_estate'].includes(i.type) && !(i.type === 'kupat_gemel' && !i.liquidityDate));
+  for (const i of items) i.liquid = isLiquid(i);
+  const liquid = items.filter(isLiquid).reduce((s, i) => s + i.valueIls, 0);
   const sumBy = (key: (i: NetWorthItem) => string) => items.reduce<Record<string, number>>((acc, i) => {
     acc[key(i)] = round((acc[key(i)] ?? 0) + i.valueIls);
     return acc;

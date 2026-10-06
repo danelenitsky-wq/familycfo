@@ -110,6 +110,7 @@ export interface ScheduledItem {
 export interface NetWorthItem {
   id: string; name: string; group: 'bank' | 'asset' | 'card_debt' | 'liability'; type: string; ownerMemberId: number | null;
   provider: string | null; currency: string; value: number; valueIls: number; asOf: string | null; liquidityDate: string | null;
+  liquid?: boolean;
 }
 export interface NetWorth {
   asOf: string; items: NetWorthItem[]; totals: { assets: number; liabilities: number; netWorth: number; liquid: number };

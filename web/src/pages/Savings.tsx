@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type Asset, type Fund, type NetWorth } from '../api';
+import { api, type Asset, type Fund, type NetWorth, type NetWorthItem } from '../api';
 import { useLookups } from '../state';
 import { ASSET_TYPE_LABELS, day, moneyIn, todayIso } from '../format';
 import {
   Banknote, Bitcoin, Building, ChartCandlestick, CreditCard, DollarSign, Euro, GraduationCap, HandCoins, Home, Landmark, LineChart, Lock,
   type LucideIcon, Package, Pencil, PiggyBank, PoundSterling, Scale, SwissFranc, Target, TrendingUp, Umbrella, Vault, Wallet,
 } from 'lucide-react';
+import { BreakdownModal, type BreakdownGroup, type BreakdownLine } from '../components/Breakdown';
 import { Empty, ErrorBox, Field, Loading, MemberBadge, MemberSelect, Modal, Money, PageHeader, Picker, Progress, SectionTitle, Stat } from '../components/ui';
 import { DonutChart, SimpleLine } from '../components/charts';
 import { hueFor } from '@/lib/visuals';
@@ -29,6 +30,8 @@ export default function Savings() {
   const assets = useQuery({ queryKey: ['assets'], queryFn: () => api.get<Asset[]>('/assets') });
   const [editing, setEditing] = useState<Partial<Asset> & { value?: number } | null>(null);
   const [valuing, setValuing] = useState<{ asset: Asset; value: number; date: string } | null>(null);
+  // which tile's calculation is open
+  const [explain, setExplain] = useState<ExplainKey | null>(null);
 
   const refresh = () => { for (const k of ['networth', 'assets', 'meta']) qc.invalidateQueries({ queryKey: [k] }); };
   const saveAsset = useMutation({
@@ -67,11 +70,16 @@ export default function Savings() {
         actions={<button className="btn btn-primary" onClick={() => setEditing({ type: 'bank_savings', currency: 'ILS' })}>+ נכס חדש</button>} />
 
       <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
-        <Stat index={0} icon={Scale} label="שווי נקי" value={totals.netWorth} tone={totals.netWorth >= 0 ? 'good' : 'bad'} spark={nwSpark} />
-        <Stat index={1} icon={TrendingUp} color="var(--chart-5)" label="נכסים" value={totals.assets} />
-        <Stat index={2} icon={Landmark} label="התחייבויות" value={totals.liabilities} tone="bad" />
-        <Stat index={3} icon={Banknote} color="var(--chart-2)" label="נזיל (זמין היום)" value={totals.liquid} hint="עו״ש + חסכונות נזילים, בלי פנסיה ונדל״ן" />
+        <Stat index={0} icon={Scale} label="שווי נקי" value={totals.netWorth} tone={totals.netWorth >= 0 ? 'good' : 'bad'} spark={nwSpark} onClick={() => setExplain('netWorth')} />
+        <Stat index={1} icon={TrendingUp} color="var(--chart-5)" label="נכסים" value={totals.assets} onClick={() => setExplain('assets')} />
+        <Stat index={2} icon={Landmark} label="התחייבויות" value={totals.liabilities} tone="bad" onClick={() => setExplain('liabilities')} />
+        <Stat index={3} icon={Banknote} color="var(--chart-2)" label="נזיל (זמין היום)" value={totals.liquid} hint="עו״ש + חסכונות נזילים, בלי פנסיה ונדל״ן" onClick={() => setExplain('liquid')} />
       </div>
+
+      {explain && (() => {
+        const b = explainNetWorth(explain, nw.data!, n => meta?.members.find(m => m.id === n)?.name ?? 'משותף');
+        return <BreakdownModal title={b.title} lines={b.lines} groups={b.groups} groupsTitle="לפי סוג" onClose={() => setExplain(null)} />;
+      })()}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <div className="card min-w-0 lg:col-span-2">
@@ -210,4 +218,57 @@ export default function Savings() {
       )}
     </>
   );
+}
+
+type ExplainKey = 'netWorth' | 'assets' | 'liabilities' | 'liquid';
+
+/** The items behind a net-worth tile, grouped by type, each group opening to its items. */
+function explainNetWorth(which: ExplainKey, data: NetWorth, ownerName: (id: number | null) => string):
+  { title: string; lines: BreakdownLine[]; groups: BreakdownGroup[] } {
+  const { items, totals } = data;
+  const groupBy = (list: NetWorthItem[]): BreakdownGroup[] => {
+    const groups = new Map<string, BreakdownGroup>();
+    for (const i of list) {
+      const name = ASSET_TYPE_LABELS[i.type] ?? ASSET_TYPE_LABELS[i.group] ?? i.type;
+      const g = groups.get(name) ?? { name, amount: 0, rows: [] };
+      g.amount += i.valueIls;
+      g.rows!.push({ id: i.id, date: i.asOf ?? undefined, description: i.provider && !i.name.includes(i.provider) ? `${i.name} · ${i.provider}` : i.name,
+        account: ownerName(i.ownerMemberId), amount: i.valueIls,
+        note: i.currency !== 'ILS' ? `${i.value.toLocaleString('he-IL')} ${i.currency}` : i.liquidityDate && i.group === 'asset' ? `נזיל מ-${i.liquidityDate}` : undefined });
+      groups.set(name, g);
+    }
+    return [...groups.values()].map(g => ({ ...g, amount: Math.round(g.amount) })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  };
+  const positive = items.filter(i => i.valueIls > 0);
+  const negative = items.filter(i => i.valueIls < 0);
+  if (which === 'netWorth') return {
+    title: 'שווי נקי — איך זה חושב',
+    lines: [
+      { label: `נכסים (${positive.length})`, amount: totals.assets },
+      { label: `פחות: התחייבויות (${negative.length})`, amount: totals.liabilities, note: 'הלוואות, משכנתא, חיובי כרטיס שעוד לא ירדו ויתרות שליליות' },
+      { label: 'שווי נקי', amount: totals.netWorth, total: true },
+    ],
+    groups: groupBy(items.filter(i => i.valueIls !== 0)),
+  };
+  if (which === 'assets') return {
+    title: 'נכסים — איך זה חושב',
+    lines: [{ label: 'כל מה ששווה כסף: עו״ש ביתרת זכות, חסכונות, פנסיה, השתלמות, השקעות, נדל״ן', amount: totals.assets, total: true }],
+    groups: groupBy(positive),
+  };
+  if (which === 'liabilities') return {
+    title: 'התחייבויות — איך זה חושב',
+    lines: [{ label: 'הלוואות ומשכנתא (יתרה לסילוק), חיובי כרטיס שעוד לא ירדו מהבנק, ועו״ש ביתרת חובה', amount: totals.liabilities, total: true }],
+    groups: groupBy(negative),
+  };
+  const liquid = items.filter(i => i.liquid);
+  const locked = items.filter(i => i.group === 'asset' && !i.liquid && i.valueIls > 0);
+  return {
+    title: 'נזיל (זמין היום) — איך זה חושב',
+    lines: [
+      { label: 'נזיל: עו״ש וחסכונות שאפשר למשוך היום', amount: totals.liquid, total: true },
+      { label: `לא נספר: חסכונות שאינם נזילים (${locked.length})`, amount: Math.round(locked.reduce((s, i) => s + i.valueIls, 0)),
+        note: 'פנסיה, נדל״ן, קופת גמל, וקרן השתלמות / פיקדון לפני מועד הנזילות' },
+    ],
+    groups: groupBy(liquid.filter(i => i.valueIls !== 0)),
+  };
 }
