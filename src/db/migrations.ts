@@ -633,6 +633,24 @@ export const migrations: Migration[] = [
       for (const [from, to] of Object.entries(SCRAPER_CATEGORY_ALIASES)) alias.run(from, to);
     },
   },
+  {
+    version: 15,
+    name: 'uploaded statement files',
+    up(db) {
+      // one row per statement file uploaded from the UI (the file itself isn't kept, only what came of it)
+      db.exec(`CREATE TABLE uploads (
+        id INTEGER PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        file_name TEXT,
+        uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        rows INTEGER NOT NULL,
+        inserted INTEGER NOT NULL,
+        from_date TEXT,
+        to_date TEXT,
+        balance REAL
+      )`);
+    },
+  },
 ];
 
 type CategoryKind = 'expense' | 'income' | 'transfer' | 'card_payment' | 'savings';

@@ -6,17 +6,22 @@ import {
   MoreHorizontal, PenLine, PieChart, PiggyBank, Plus, Receipt, Scale, ShoppingBag, TrendingUp, Undo2, X,
 } from 'lucide-react';
 import { api, qs, type Tx } from '../api';
-import { useFilters, useLookups } from '../state';
-import { day, KIND_LABELS, monthName, todayIso } from '../format';
+import { useFilters, useLookups, usePeriod } from '../state';
+import { day, KIND_LABELS, monthName, monthsIn, periodName } from '../format';
 import {
   AccountSelect, AnimatedNumber, BusinessSelect, CategorySelect, Empty, ErrorBox, Field, Loading, MemberSelect, Modal, Money,
   NewTagInput, PageHeader, Picker, Stat, TagPicker, type PickerOption,
 } from '../components/ui';
 import { CategoryReport } from '../components/CategoryReport';
+import { BreakdownModal, type BreakdownGroup, type BreakdownLine } from '../components/Breakdown';
 import { ManualEntry } from '../components/ManualEntry';
 import { MemberAvatar } from '@/lib/visuals';
 
-interface TxPage { total: number; totals: { income: number; spend: number; businessIncome: number; businessSpend: number; moved: number }; rows: Tx[] }
+type Metric = 'income' | 'spend' | 'savings';
+interface TxPage {
+  total: number; totals: { income: number; spend: number; savings: number; businessIncome: number; businessSpend: number; moved: number }; rows: Tx[];
+  breakdown?: Record<Metric, { lines: BreakdownLine[]; groups: BreakdownGroup[] }>;
+}
 type SortKey = 'date' | 'description' | 'amount' | 'category' | 'member' | 'business' | 'account';
 
 const KIND_ICONS: Record<string, ReactNode> = {
@@ -26,14 +31,8 @@ const KIND_ICONS: Record<string, ReactNode> = {
 const kindOptions = (): PickerOption[] => Object.entries(KIND_LABELS).map(([k, v]) => ({ value: k, label: v, icon: KIND_ICONS[k] }));
 const formatCount = (n: number) => Math.round(n).toLocaleString('he-IL');
 
-function cycleOptions(n = 12): string[] {
-  const d = new Date(`${todayIso().slice(0, 7)}-01T12:00:00`);
-  return Array.from({ length: n }, (_, i) => {
-    const x = new Date(d);
-    x.setMonth(d.getMonth() - i + 1);
-    return x.toISOString().slice(0, 7);
-  });
-}
+/** Picker value for the whole period (not a cycle key). */
+const PERIOD = '__period';
 
 export default function Transactions() {
   const { params } = useFilters();
@@ -41,7 +40,10 @@ export default function Transactions() {
   const qc = useQueryClient();
   // filters can arrive in the URL (e.g. clicking a category on the dashboard)
   const [urlParams, setUrlParams] = useSearchParams();
-  const [cycle, setCycle] = useState(urlParams.get('cycle') ?? todayIso().slice(0, 7));
+  // the app's period (a month, or all of it), unless a link asked for another cycle ('' = no time limit)
+  const period = usePeriod();
+  const [cycleOverride, setCycleOverride] = useState<string | null>(urlParams.get('cycle'));
+  const cycle = cycleOverride ?? period.cycleParam;
   const [search, setSearch] = useState(urlParams.get('search') ?? '');
   const [category, setCategory] = useState<number | null>(urlParams.get('category') ? Number(urlParams.get('category')) : null);
   const [account, setAccount] = useState<string | null>(urlParams.get('account'));
@@ -49,11 +51,13 @@ export default function Transactions() {
   const [review, setReview] = useState(urlParams.get('review') === '1');
   // a card statement (from clicking an upcoming card charge): that card's rows charged in that month
   const [charge, setCharge] = useState<string | null>(urlParams.get('charge'));
+  // the whole period (several months): averages per month too
+  const rangeMonths = cycle && !review && !charge && cycle.includes('..') ? monthsIn(cycle) : 0;
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'date', dir: -1 });
   // keep the URL in sync so the filtered view can be bookmarked or opened again with Back
   useEffect(() => {
     const next = new URLSearchParams();
-    if (cycle) next.set('cycle', cycle);
+    if (cycleOverride) next.set('cycle', cycleOverride);
     if (search) next.set('search', search);
     if (category != null) next.set('category', String(category));
     if (account) next.set('account', account);
@@ -61,17 +65,22 @@ export default function Transactions() {
     if (review) next.set('review', '1');
     if (charge) next.set('charge', charge);
     setUrlParams(next, { replace: true });
-  }, [cycle, search, category, account, kind, review, charge, setUrlParams]);
+  }, [cycleOverride, search, category, account, kind, review, charge, setUrlParams]);
   const [hideCardPayments, setHideCardPayments] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Tx | null>(null);
   const [showCategories, setShowCategories] = useState(false);
   // hand-entered rows (cash, paid by someone else…): null = closed, 'new' = adding, a row = editing it
   const [manual, setManual] = useState<Tx | 'new' | null>(null);
-  const [suggestRule, setSuggestRule] = useState<{ tx: Tx; patch: Record<string, unknown>; count: number } | null>(null);
+  const [suggestRule, setSuggestRule] = useState<{ tx: Tx; patch: Record<string, unknown>; count: number; sameAmount?: boolean } | null>(null);
 
   const query = { ...params, cycle: review ? undefined : cycle || undefined, search, category, account, kind, review: review ? 1 : undefined, charge: charge ?? undefined, hideCardPayments: hideCardPayments ? 1 : undefined, limit: 1000 };
   const { data, isLoading, error } = useQuery({ queryKey: ['transactions', query], queryFn: () => api.get<TxPage>(`/transactions${qs(query)}`) });
+  // a stat tile's calculation, fetched when it's opened
+  const [explain, setExplain] = useState<Metric | null>(null);
+  const breakdownQuery = { ...query, breakdown: 1, limit: 1 };
+  const breakdown = useQuery({ queryKey: ['transactions', breakdownQuery], enabled: explain != null,
+    queryFn: () => api.get<TxPage>(`/transactions${qs(breakdownQuery)}`) });
 
   const invalidate = () => {
     for (const k of ['transactions', 'summary', 'budgets', 'cashflow', 'planning', 'forecast', 'month-plan', 'income']) qc.invalidateQueries({ queryKey: [k] });
@@ -83,9 +92,9 @@ export default function Transactions() {
       invalidate();
       // offer "apply to all similar" for category / business / member edits
       if ('categoryId' in body || 'businessId' in body || 'memberId' in body) {
-        const similar = await api.get<{ count: number }>(`/transactions/${id}/similar`);
+        const similar = await api.get<{ count: number; sameAmount?: boolean }>(`/transactions/${id}/similar`);
         const tx = data?.rows.find(r => r.id === id);
-        if (similar.count > 0 && tx) setSuggestRule({ tx, patch: body, count: similar.count });
+        if (similar.count > 0 && tx) setSuggestRule({ tx, patch: body, count: similar.count, sameAmount: similar.sameAmount });
       }
     },
   });
@@ -134,11 +143,17 @@ export default function Transactions() {
   );
   const allSelected = rows.length > 0 && rows.every(r => selected.has(r.id));
   const toggle = (id: number) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const cycles = useMemo(() => cycleOptions(), []);
   const cyclePickerOptions = useMemo<PickerOption[]>(() => [
-    { value: '', label: 'כל התקופות' },
-    ...cycles.map(c => ({ value: c, label: monthName(c), icon: <CalendarDays /> })),
-  ], [cycles]);
+    { value: PERIOD, label: 'כל התקופה', icon: <CalendarDays /> },
+    ...period.cycles.map(c => ({ value: c, label: monthName(c), icon: <CalendarDays /> })),
+    ...(cycleOverride && !period.cycles.includes(cycleOverride) ? [{ value: cycleOverride, label: periodName(cycleOverride), icon: <CalendarDays /> }] : []),
+    { value: '', label: 'בלי הגבלת זמן' },
+  ], [period.cycles, cycleOverride]);
+  const pickCycle = (v: string | null) => {
+    if (v === '') { setCycleOverride(''); return; }
+    setCycleOverride(null);
+    period.setSelected(v === PERIOD || v == null ? null : v);
+  };
   const kindFilterOptions = useMemo<PickerOption[]>(() => [{ value: '', label: 'כל הסוגים' }, ...kindOptions()], []);
   const tagOptions = useMemo<PickerOption[]>(() => [
     { value: '', label: '+ תגית' },
@@ -151,30 +166,52 @@ export default function Transactions() {
   return (
     <>
       <PageHeader title="תנועות" icon={ArrowLeftRight}
-        subtitle={data ? <>{data.total} תנועות{cycle && !review ? ` · ${monthName(cycle)}` : ''}</> : undefined}
+        subtitle={data ? <>{data.total} תנועות{cycle && !review ? ` · ${periodName(cycle)}` : ''}</> : undefined}
         actions={<>
           <button className="btn" onClick={() => setShowCategories(true)} disabled={!data}><PieChart />פירוט לפי קטגוריות</button>
           <button className="btn btn-primary" onClick={() => setManual('new')}><Plus />הוספת הוצאה</button>
         </>} />
 
       {data && (
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
           <Stat index={0} label="תנועות" icon={Receipt} color="var(--chart-1)"
             value={<AnimatedNumber value={data.total} format={formatCount} className="num" />}
             hint={data.totals.moved > 0 ? <>מתוכן העברות, חסכונות ותשלומי כרטיס <Money value={data.totals.moved} /> — לא נספרים</> : undefined} />
-          <Stat index={1} label="הכנסות" icon={ArrowDownLeft} tone="good" value={data.totals.income}
+          <Stat index={1} label="הכנסות" icon={ArrowDownLeft} tone="good" value={data.totals.income} onClick={() => setExplain('income')}
             hint={data.totals.businessIncome > 0 ? <>ועוד <Money value={data.totals.businessIncome} /> הכנסות עסק</> : 'חלק הבית, בלי העברות בין חשבונות'} />
-          <Stat index={2} label="הוצאות" icon={ArrowUpRight} tone="bad" value={data.totals.spend}
-            hint={<button type="button" className="hover:underline" onClick={() => setShowCategories(true)}>
+          <Stat index={2} label="הוצאות" icon={ArrowUpRight} tone="bad" value={data.totals.spend} onClick={() => setExplain('spend')}
+            hint={<button type="button" className="hover:underline" onClick={e => { e.stopPropagation(); setShowCategories(true); }}>
               {data.totals.businessSpend > 0 ? <>ועוד <Money value={data.totals.businessSpend} /> של העסק · </> : null}לפי קטגוריות ←
             </button>} />
-          <Stat index={3} label="נטו" icon={Scale} color="var(--chart-6)"
-            value={<Money value={data.totals.income - data.totals.spend} colored animated />} hint="הכנסות פחות הוצאות" />
+          <Stat index={3} label="חיסכון והשקעות" icon={PiggyBank} color="var(--chart-5)" value={data.totals.savings} onClick={() => setExplain('savings')}
+            hint="הפקדות לחיסכון / השקעות, פחות משיכות" />
+          <Stat index={4} label="נטו" icon={Scale} color="var(--chart-6)"
+            value={<Money value={data.totals.income - data.totals.spend} colored animated />} hint="הכנסות פחות הוצאות (החיסכון לא מקטין אותו)" />
+        </div>
+      )}
+      {data && rangeMonths > 1 && (
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat index={4} label={`ממוצע הכנסות לחודש`} icon={ArrowDownLeft} tone="good" value={Math.round(data.totals.income / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={5} label="ממוצע הוצאות לחודש" icon={ArrowUpRight} tone="bad" value={Math.round(data.totals.spend / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={6} label="ממוצע חיסכון לחודש" icon={PiggyBank} color="var(--chart-5)" value={Math.round(data.totals.savings / rangeMonths)}
+            hint={`ממוצע של ${rangeMonths} חודשים (כולל החודש הנוכחי)`} />
+          <Stat index={7} label="ממוצע נטו לחודש" icon={Scale} color="var(--chart-6)"
+            value={<Money value={Math.round((data.totals.income - data.totals.spend) / rangeMonths)} colored animated />} hint="הכנסות פחות הוצאות, בממוצע לחודש" />
         </div>
       )}
 
+      {explain && (
+        <BreakdownModal onClose={() => setExplain(null)}
+          title={`${{ income: 'הכנסות', spend: 'הוצאות', savings: 'חיסכון והשקעות' }[explain]} — איך זה חושב${cycle && !review ? ` · ${periodName(cycle)}` : ''}`}
+          lines={breakdown.data?.breakdown?.[explain].lines ?? []}
+          groups={breakdown.data?.breakdown?.[explain].groups ?? []}
+          groupsTitle={breakdown.isPending ? 'טוען…' : explain === 'savings' ? 'לפי פעולה' : 'לפי קטגוריה'} />
+      )}
+
       {showCategories && data && (
-        <Modal wide title={`הוצאות לפי קטגוריה${cycle && !review ? ` — ${monthName(cycle)}` : ''}`} onClose={() => setShowCategories(false)}>
+        <Modal wide title={`הוצאות לפי קטגוריה${cycle && !review ? ` — ${periodName(cycle)}` : ''}`} onClose={() => setShowCategories(false)}>
           <CategoryReport rows={data.rows} truncated={data.total > data.rows.length}
             onPick={id => { setCategory(id); setShowCategories(false); }} />
         </Modal>
@@ -187,7 +224,7 @@ export default function Transactions() {
             <button className="btn-ghost btn-icon min-h-7" onClick={() => setCharge(null)} aria-label="הסר סינון חיוב"><X /></button>
           </div>
         ) : (
-          <Picker className="input" value={cycle} onChange={v => setCycle(v ?? '')} disabled={review} options={cyclePickerOptions} placeholder="כל התקופות" searchable={false} />
+          <Picker className="input" value={cycleOverride ?? period.selected ?? PERIOD} onChange={pickCycle} disabled={review} options={cyclePickerOptions} placeholder="כל התקופות" searchable={false} />
         )}
         <input className="input" placeholder="חיפוש…" value={search} onChange={e => setSearch(e.target.value)} />
         <CategorySelect value={category} onChange={setCategory} />
@@ -218,7 +255,7 @@ export default function Transactions() {
       {isLoading ? <Loading /> : error ? <ErrorBox error={error} /> : rows.length === 0 ? (charge ? (
         <Empty>
           אין עדיין פירוט של החיוב הזה — הכרטיס לא דיווח אילו עסקאות ייכנסו לחיוב של {day(charge)} (הסכום בתחזית הוא הערכה לפי חיובים קודמים).
-          <div className="mt-2"><button className="btn" onClick={() => { setCharge(null); setCycle(''); }}>הצג את כל העסקאות בכרטיס</button></div>
+          <div className="mt-2"><button className="btn" onClick={() => { setCharge(null); setCycleOverride(''); }}>הצג את כל העסקאות בכרטיס</button></div>
         </Empty>
       ) : <Empty><Inbox className="mx-auto mb-2 h-6 w-6 opacity-50" />אין תנועות לתצוגה</Empty>) : (
         <div className="card animate-fade-in scroll-x p-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0">
@@ -303,7 +340,9 @@ export default function Transactions() {
           </button>
         </>}>
           <p className="text-sm">
-            יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b>. אפשר ליצור כלל שיחול עליהן וגם על תנועות חדשות מאותו בית עסק.
+            {suggestRule.sameAmount
+              ? <>יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b> באותו סכום (<Money value={Math.abs(suggestRule.tx.amount)} />). הכלל יחול רק על העברות בסכום הזה — העברות בסכומים אחרים לא ישתנו.</>
+              : <>יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b>. אפשר ליצור כלל שיחול עליהן וגם על תנועות חדשות מאותו בית עסק.</>}
             תנועות ששינית ידנית לא ישתנו.
           </p>
         </Modal>

@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
-import { Banknote, CalendarCheck, CalendarClock, CalendarDays, Clock, Layers, ListChecks, Pencil, PieChart, Plus, Sparkles, Wallet, X } from 'lucide-react';
-import { api, qs, type Commitment, type MonthPlan, type MonthPlanned, type PlannedItem } from '../api';
+import { Banknote, CalendarCheck, CalendarClock, CalendarDays, Clock, Layers, ListChecks, Pencil, PieChart, Plus, Scale, Sparkles, Wallet, X } from 'lucide-react';
+import { api, qs, type Commitment, type MonthIncome, type MonthPlan, type MonthPlanned, type PlannedItem } from '../api';
 import { ManualEntry } from '../components/ManualEntry';
+import { BreakdownModal, type BreakdownGroup, type BreakdownLine } from '../components/Breakdown';
 import { ScheduledManager } from '../components/ScheduledManager';
-import { useFilters, useLookups } from '../state';
+import { useFilters, useLookups, usePeriod } from '../state';
 import { day, monthName, pct, todayIso } from '../format';
 import { StartOfMonth } from '../components/StartOfMonth';
 import { AccountSelect, CategorySelect, Empty, ErrorBox, Field, Loading, MemberBadge, Modal, Money, PageHeader, Picker, SectionTitle, Segmented, Stat } from '../components/ui';
@@ -35,10 +36,24 @@ export default function Fixed() {
   const { params } = useFilters();
   const { accountName } = useLookups();
   const qc = useQueryClient();
-  const [cycleKey, setCycleKey] = useState<string | null>(null);
+  // the month picked in the app's period (this page plans one month; "all the period" → the current month)
+  const { selected, cycleParam } = usePeriod();
+  // the whole period: also the average month of it
+  const averageQuery = { ...params, cycle: cycleParam };
+  const average = useQuery({
+    queryKey: ['month-plan', 'average', averageQuery], enabled: !selected && cycleParam.includes('..'),
+    queryFn: () => api.get<{ months: AverageMonth[]; average: Record<AverageKey, number> }>(`/month-plan/average${qs(averageQuery)}`),
+  });
+  const [cycleKey, setCycleKey] = useState<string | null>(selected);
+  useEffect(() => setCycleKey(selected), [selected]);
   const [view, setView] = useState<'accounts' | 'categories'>('accounts');
   const [adding, setAdding] = useState<{ name: string; amount: number; day: number; accountId: string | null; categoryId: number | null; matchPattern: string } | null>(null);
   const query = { ...params, cycle: cycleKey ?? undefined };
+  // which tile's calculation is open
+  const [explain, setExplain] = useState<'income' | 'fixed' | 'installments' | `avg:${AverageKey}` | null>(null);
+  const incomeQuery = { ...params, cycle: cycleKey ?? undefined };
+  const incomeDetail = useQuery({ queryKey: ['income', 'month-plan', incomeQuery], enabled: explain === 'income',
+    queryFn: () => api.get<MonthIncome>(`/income${qs(incomeQuery)}`) });
   const { data, isLoading, error } = useQuery({ queryKey: ['month-plan', query], queryFn: () => api.get<MonthPlan>(`/month-plan${qs(query)}`) });
   const { meta } = useLookups();
 
@@ -95,15 +110,32 @@ export default function Fixed() {
             ]} />
         } />
 
+      {!selected && average.data && (
+        <div className="card mb-4">
+          <SectionTitle icon={Scale}>ממוצע לחודש בתקופה ({average.data.months.length} חודשים)</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {AVERAGE_TILES.map(t => (
+              <AverageTile key={t.key} label={t.label} value={average.data!.average[t.key]} color={t.color ?? COLORS[t.key as 'fixed' | 'installments']} colored={t.key === 'net'}
+                onClick={() => setExplain(`avg:${t.key}`)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {explain && (() => {
+        const b = explainOf(explain, data, incomeDetail.data, average.data?.months ?? [], accountName);
+        return <BreakdownModal title={b.title} lines={b.lines} groups={b.groups} groupsTitle={b.groupsTitle} onClose={() => setExplain(null)} />;
+      })()}
+
       <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
-        <Stat index={0} icon={Banknote} color="var(--positive)" label={`הכנסה ב${monthName(data.cycle.key)}`} value={data.income}
+        <Stat index={0} icon={Banknote} color="var(--positive)" label={`הכנסה ב${monthName(data.cycle.key)}`} value={data.income} onClick={() => setExplain('income')}
           hint={data.incomePending > 0
             ? <>נכנס <Money value={data.incomeReceived} /> · עוד צפוי <Money value={data.incomePending} /> (משכורות וקצבאות שלא נכנסו)</>
             : 'כל ההכנסות הקבועות כבר נכנסו'} />
-        <Stat index={1} icon={CalendarCheck} color={COLORS.fixed} label="קבועות" value={fixedAll}
+        <Stat index={1} icon={CalendarCheck} color={COLORS.fixed} label="קבועות" value={fixedAll} onClick={() => setExplain('fixed')}
           hint={<>ברשימה <Money value={data.fixed.total} /> ({listed.length}) · שולם <Money value={data.fixed.paid} /> · עוד צפוי <Money value={data.fixed.remaining} />
             {data.otherFixed.amount > 0 && <> · מחוץ לרשימה <Money value={data.otherFixed.amount} /></>}</>} />
-        <Stat index={2} icon={Layers} color={COLORS.installments} label="תשלומים (עסקאות בתשלומים)" value={data.installments.total}
+        <Stat index={2} icon={Layers} color={COLORS.installments} label="תשלומים (עסקאות בתשלומים)" value={data.installments.total} onClick={() => setExplain('installments')}
           hint={<>{data.installments.items.length} תשלומים החודש</>} />
         <Stat index={3} icon={Wallet} label="נשאר להוצאות משתנות" value={data.variableLeft} tone={data.variableLeft < 0 ? 'bad' : 'good'}
           hint={<>מתוך <Money value={data.forVariable} /> · הוצאתם <Money value={data.variableSpent} />{data.daysLeft > 0 && data.variableLeft > 0 && <> · כ-<Money value={data.perDayLeft} /> ליום</>}</>} />
@@ -395,4 +427,85 @@ function PlannedCard({ items, all, month, onAdd, onEdit, onAction }: {
 function GroupIcon({ name }: { name: string }) {
   const Icon = categoryIcon(name);
   return <span className="icon-tile h-6 w-6 rounded-md [&_svg]:h-3.5 [&_svg]:w-3.5"><Icon /></span>;
+}
+
+function AverageTile({ label, value, color, colored, onClick }: { label: string; value: number; color: string; colored?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" title="לחצו לפירוט לפי חודשים" onClick={onClick} className="rounded-lg border border-line-soft p-3 text-start transition-colors hover:bg-muted/40">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="h-2 w-2 rounded-full" style={{ background: color }} />{label}</div>
+      <div className="mt-1 text-lg font-semibold"><Money value={value} colored={colored} /></div>
+    </button>
+  );
+}
+
+type AverageKey = 'income' | 'fixed' | 'installments' | 'net';
+interface AverageMonth { key: string; income: number; fixed: number; installments: number; net: number }
+const AVERAGE_TILES: { key: AverageKey; label: string; color?: string }[] = [
+  { key: 'income', label: 'הכנסה', color: 'var(--positive)' },
+  { key: 'fixed', label: 'קבועות' },
+  { key: 'installments', label: 'תשלומים' },
+  { key: 'net', label: 'נטו (הכנסה פחות קבועות ותשלומים)', color: 'var(--chart-6)' },
+];
+const STATE_LABELS: Record<Commitment['state'], string> = { paid: 'שולם', partial: 'שולם חלקית', pending: 'עוד צפוי', missing: 'לא נמצא חיוב' };
+
+/** The calculation behind a tile of this page. */
+function explainOf(which: string, data: MonthPlan, income: MonthIncome | undefined, months: AverageMonth[], accountName: (id: string) => string):
+  { title: string; lines: BreakdownLine[]; groups: BreakdownGroup[]; groupsTitle?: string } {
+  const month = monthName(data.cycle.key);
+  if (which.startsWith('avg:')) {
+    const key = which.slice(4) as AverageKey;
+    const label = AVERAGE_TILES.find(t => t.key === key)!.label;
+    const total = months.reduce((s, m) => s + m[key], 0);
+    return {
+      title: `${label} — ממוצע לחודש`,
+      lines: [
+        { label: `סה״כ ב-${months.length} חודשים`, amount: total },
+        { label: `חלקי ${months.length} חודשים = ממוצע`, amount: months.length ? Math.round(total / months.length) : 0, total: true },
+      ],
+      groups: [...months].reverse().map(m => ({ name: monthName(m.key), amount: m[key] })), groupsTitle: 'לפי חודש',
+    };
+  }
+  if (which === 'income') {
+    const rec = income?.recurring ?? [];
+    return {
+      title: `הכנסה ב${month} — איך זה חושב`,
+      lines: [
+        { label: 'הכנסות קבועות שנכנסו', amount: rec.filter(r => r.received).reduce((s, r) => s + r.amount, 0) },
+        { label: 'הכנסות קבועות שעוד צפויות', amount: income?.pending ?? data.incomePending, note: 'משכורות וקצבאות שבדרך כלל נכנסות ועוד לא הגיעו' },
+        { label: 'הכנסות אחרות שנכנסו', amount: income?.other ?? 0 },
+        { label: 'הכנסה בחודש', amount: data.income, total: true },
+      ],
+      groups: [
+        ...rec.map(r => ({ name: r.name, amount: r.amount, note: `${r.received ? 'נכנס' : 'צפוי'} ${day(r.date)} · ${accountName(r.accountId)}` })),
+        ...(income?.other ? [{ name: 'הכנסות אחרות (לא קבועות)', amount: income.other }] : []),
+      ],
+      groupsTitle: income ? 'ההכנסות' : 'טוען…',
+    };
+  }
+  if (which === 'fixed') {
+    const listed = data.commitments.filter(c => c.status === 'confirmed');
+    return {
+      title: `קבועות ב${month} — איך זה חושב`,
+      lines: [
+        { label: `ברשימת הקבועות (${listed.length})`, amount: data.fixed.total, note: 'לכל אחת: מה שחויב, או הסכום הצפוי אם הוא גבוה יותר' },
+        { label: `חיובים קבועים מחוץ לרשימה (${data.otherFixed.count})`, amount: data.otherFixed.amount, note: 'תנועות שסומנו כקבועות לפי הקטגוריה או ידנית' },
+        { label: 'קבועות', amount: data.fixed.total + data.otherFixed.amount, total: true },
+      ],
+      groups: listed.map(c => ({ name: c.name, amount: Math.max(c.actual, c.expected), note: `${STATE_LABELS[c.state]} · ${day(c.dueDate)}` }))
+        .sort((a, b) => b.amount - a.amount),
+      groupsTitle: 'הקבועות ברשימה',
+    };
+  }
+  return {
+    title: `תשלומים ב${month} — איך זה חושב`,
+    lines: [
+      { label: 'כבר חויבו', amount: data.installments.paid },
+      { label: 'עוד צפויים', amount: data.installments.total - data.installments.paid },
+      { label: 'תשלומים החודש', amount: data.installments.total, total: true },
+    ],
+    groups: data.installments.items.map(it => ({ name: it.description, amount: it.amount,
+      note: [it.number && it.of ? `תשלום ${it.number} מתוך ${it.of}` : null, day(it.date), accountName(it.accountId)].filter(Boolean).join(' · ') }))
+      .sort((a, b) => b.amount - a.amount),
+    groupsTitle: 'העסקאות',
+  };
 }

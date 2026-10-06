@@ -54,7 +54,7 @@ const TONE_TILE: Record<Tone, string> = { good: 'var(--positive)', bad: 'var(--n
  * KPI card. Optional icon (tinted tile), trend sparkline and a delta chip. `value` may be a
  * number (animated as money) or any node.
  */
-export function Stat({ label, value, hint, tone, icon: Icon, color, spark, delta, index = 0, format }: {
+export function Stat({ label, value, hint, tone, icon: Icon, color, spark, delta, index = 0, format, onClick }: {
   label: string; value: ReactNode | number; hint?: ReactNode; tone?: Tone;
   icon?: ComponentType<{ className?: string }>; color?: string; spark?: number[];
   /** change vs a reference, as a fraction (0.12 = +12%); positiveIsGood flips the colouring */
@@ -62,13 +62,17 @@ export function Stat({ label, value, hint, tone, icon: Icon, color, spark, delta
   index?: number;
   /** how a numeric value is shown (default: money) */
   format?: (n: number) => string;
+  /** makes the tile a button (e.g. to show how its number was calculated) */
+  onClick?: () => void;
 }) {
   const tile = color ?? (tone ? TONE_TILE[tone] : 'var(--primary)');
   const deltaGood = delta ? (delta.value >= 0) === (delta.positiveIsGood ?? true) : false;
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay: index * 0.06, ease: [0.22, 1, 0.36, 1] }}
-      className="card card-hover relative flex min-w-0 flex-col overflow-hidden">
+      className={cn('card card-hover relative flex min-w-0 flex-col overflow-hidden', onClick && 'cursor-pointer focus-visible:ring-2 focus-visible:ring-primary')}
+      {...(onClick ? { role: 'button', tabIndex: 0, title: 'לחצו לפירוט החישוב', onClick,
+        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } } : {})}>
       {/* soft wash in the card's colour */}
       <div aria-hidden className="pointer-events-none absolute -end-10 -top-12 h-32 w-32 rounded-full opacity-60 blur-2xl"
         style={{ background: `color-mix(in oklab, ${tile} 16%, transparent)` }} />

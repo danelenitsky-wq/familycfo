@@ -2,8 +2,8 @@ import { Fragment, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qs, type BudgetStatus, type MonthIncome, type Tx } from '../api';
-import { useFilters, useLookups } from '../state';
-import { day, monthName, todayIso } from '../format';
+import { useFilters, useLookups, usePeriod } from '../state';
+import { day, monthName, periodName } from '../format';
 import { Banknote, ChevronDown, PieChart, Target, TrendingUp } from 'lucide-react';
 import { ErrorBox, Loading, Money, PageHeader, Progress, SectionTitle } from '../components/ui';
 import { BarList, Gauge } from '../components/charts';
@@ -17,7 +17,11 @@ export default function Budgets() {
   const { filters } = useFilters();
   const { member } = useLookups();
   const qc = useQueryClient();
-  const [cycle, setCycle] = useState(todayIso().slice(0, 7));
+  const period = usePeriod();
+  // one month of the period, or all of it (budgets and averages scaled to its length; edited per month only)
+  const cycle = period.cycleParam;
+  const isRange = cycle.includes('..');
+  const editMonth = isRange ? period.cycles[0] : cycle;
   // parents are collapsed by default; a category's transactions open inline on click
   const [expandedParents, setExpandedParents] = useState<Set<number>>(new Set());
   const [openCategory, setOpenCategory] = useState<number | null>(null);
@@ -28,7 +32,7 @@ export default function Budgets() {
 
   // a budget applies from the month it's set in onwards, until it's changed
   const save = useMutation({
-    mutationFn: (b: { categoryId: number; monthlyAmount: number | null }) => api.put('/budgets', { ...b, memberId: filters.memberId ?? null, effectiveFrom: cycle }),
+    mutationFn: (b: { categoryId: number; monthlyAmount: number | null }) => api.put('/budgets', { ...b, memberId: filters.memberId ?? null, effectiveFrom: editMonth }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['budgets'] }); qc.invalidateQueries({ queryKey: ['summary'] }); },
   });
 
@@ -55,21 +59,21 @@ export default function Budgets() {
     });
   const unbudgeted = data?.filter(b => b.budget == null && b.typical > 0) ?? [];
 
-  const shift = (months: number) => {
-    const d = new Date(`${cycle}-01T12:00:00`);
-    d.setMonth(d.getMonth() + months);
-    setCycle(d.toISOString().slice(0, 7));
-  };
+  // the cycles are newest first: "previous" is the next index
+  const at = period.selected ? period.cycles.indexOf(period.selected) : -1;
+  const shift = (step: number) => { const next = period.cycles[at - step]; if (next) period.setSelected(next); };
 
   return (
     <>
       <PageHeader
         title="תקציב חודשי" icon={PieChart}
-        subtitle={<>{filters.memberId ? `תקציב של ${member(filters.memberId)?.name}` : 'תקציב משפחתי'} · {monthName(cycle)}</>}
+        subtitle={<>{filters.memberId ? `תקציב של ${member(filters.memberId)?.name}` : 'תקציב משפחתי'} · {periodName(cycle)}{isRange && ' (כל התקופה — התקציב מוכפל במספר החודשים)'}</>}
         actions={<>
-          <button className="btn" onClick={() => shift(-1)}>→ הקודם</button>
-          <button className="btn" onClick={() => shift(1)}>הבא ←</button>
-          {unbudgeted.length > 0 && (
+          {!isRange && <>
+            <button className="btn" disabled={!period.cycles[at + 1]} onClick={() => shift(-1)}>→ הקודם</button>
+            <button className="btn" disabled={at <= 0} onClick={() => shift(1)}>הבא ←</button>
+          </>}
+          {!isRange && unbudgeted.length > 0 && (
             <button className="btn btn-primary" onClick={() => unbudgeted.forEach(b => save.mutate({ categoryId: b.categoryId, monthlyAmount: Math.ceil(b.typical / 50) * 50 }))}>
               קבע תקציב לפי הממוצע ל-{unbudgeted.length} קטגוריות
             </button>
@@ -77,7 +81,7 @@ export default function Budgets() {
         </>}
       />
 
-      {income.data && <AllocationCard income={income.data} budgeted={totalBudget} month={cycle} />}
+      {income.data && !isRange && <AllocationCard income={income.data} budgeted={totalBudget} month={cycle} />}
 
       <div className="mb-4 grid gap-4 lg:grid-cols-5">
         <div className="card flex min-w-0 flex-col lg:col-span-2">
@@ -138,12 +142,12 @@ export default function Budgets() {
                         </div>
                       </td>
                       <td>
-                        <input className="input num min-w-24 py-1" type="number" min={0} step={50} defaultValue={b.budget ?? ''} placeholder="—"
+                        {isRange ? <Money value={b.budget} /> : <input className="input num min-w-24 py-1" type="number" min={0} step={50} defaultValue={b.budget ?? ''} placeholder="—"
                           key={`${b.categoryId}-${b.budget}`}
                           onBlur={e => {
                             const v = e.target.value === '' ? null : Number(e.target.value);
                             if (v !== b.budget) save.mutate({ categoryId: b.categoryId, monthlyAmount: v });
-                          }} />
+                          }} />}
                       </td>
                       <td className="text-end"><Money value={b.spent} /></td>
                       <td className={`text-end ${b.budget != null && b.projected > b.budget ? 'text-rose-600' : ''}`}>
@@ -152,7 +156,7 @@ export default function Budgets() {
                       </td>
                       <td className="whitespace-nowrap text-end text-muted-foreground">
                         <Money value={b.typical} />
-                        {b.budget == null && b.typical > 0 && (
+                        {!isRange && b.budget == null && b.typical > 0 && (
                           <button className="btn-ghost ms-1 text-xs" onClick={() => save.mutate({ categoryId: b.categoryId, monthlyAmount: Math.ceil(b.typical / 50) * 50 })}>
                             השתמש
                           </button>

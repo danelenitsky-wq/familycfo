@@ -15,7 +15,7 @@ interface ImportRow {
   originalAmount?: number | null; currency?: string | null; memo?: string | null;
   installmentNumber?: number | null; installmentTotal?: number | null;
 }
-interface ImportBody { companyId: string; accountLabel: string; ownerMemberId?: number | null; balance?: number | null; rows: ImportRow[] }
+interface ImportBody { companyId: string; accountLabel: string; ownerMemberId?: number | null; balance?: number | null; fileName?: string | null; rows: ImportRow[] }
 
 const badRequest = (message: string) => Object.assign(new Error(message), { statusCode: 400 });
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -31,6 +31,13 @@ function israelMidnight(day: string): string {
 }
 
 export function importRoutes(app: FastifyInstance, db: DB) {
+  // the files uploaded so far, newest first
+  app.get('/api/import/history', async () => (db.prepare(`
+    SELECT u.id, u.account_id AS accountId, a.display_name AS accountName, a.owner_member_id AS ownerMemberId, u.file_name AS fileName,
+      u.uploaded_at AS uploadedAt, u.rows, u.inserted, u.from_date AS fromDate, u.to_date AS toDate, u.balance
+    FROM uploads u LEFT JOIN accounts a ON a.id = u.account_id ORDER BY u.uploaded_at DESC, u.id DESC
+  `).all()));
+
   app.post('/api/import', { bodyLimit: 20 * 1024 * 1024 }, async req => {
     const b = req.body as ImportBody;
     if (!(SCRAPERS as Record<string, unknown>)[b?.companyId]) throw badRequest(`unknown company: ${b?.companyId}`);
@@ -69,6 +76,9 @@ export function importRoutes(app: FastifyInstance, db: DB) {
       return res;
     })();
     recordScrapeRun(db, { company: b.companyId, startedAt, success: true, newTransactions: saved.insertedIds.length });
+    const days = b.rows.map(r => r.date).sort();
+    db.prepare(`INSERT INTO uploads (account_id, file_name, rows, inserted, from_date, to_date, balance) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(saved.accountId, b.fileName?.trim().slice(0, 200) || null, txns.length, saved.insertedIds.length, days[0], days[days.length - 1], hasBalance ? b.balance : null);
     const pipeline = await runPipeline(db, { txIds: saved.insertedIds });
     return { accountId: saved.accountId, rows: txns.length, inserted: saved.insertedIds.length, updated: saved.updated, pipeline };
   });

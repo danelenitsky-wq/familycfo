@@ -291,8 +291,20 @@ export function dateInCycle(cycle: Cycle, day: number): string {
   return cycle.end;
 }
 
+/** A cycle by its key, or a range of whole cycles "2026-07..2026-10" (from the first one's start to the last one's end). */
 export function cycleByKey(key: string, startDay = 1): Cycle {
-  return cycleStarting(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, startDay);
+  const [from, to] = key.split('..');
+  const first = cycleStarting(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, startDay);
+  if (!to || to === from) return first;
+  const last = cycleStarting(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, startDay);
+  return { key, start: first.start, end: last.end };
+}
+
+/** How many cycles a key covers: 1, or the length of a "from..to" range. */
+export function cycleCount(key: string): number {
+  const [from, to] = key.split('..');
+  if (!to) return 1;
+  return (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7)) + 1;
 }
 
 /** The n cycles ending with (and including) the cycle containing `date`, oldest first. */

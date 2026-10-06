@@ -1,6 +1,6 @@
 import type { DB } from '../db/connection.js';
 import {
-  cycleByKey, cycleFor, cycleStartDay, daysBetween, filterTx, loadTransactions, median,
+  cycleByKey, cycleCount, cycleFor, cycleStartDay, daysBetween, filterTx, loadTransactions, median,
   recentCycles, round, today,
 } from './common.js';
 import { summarizeCycle } from './cashflow.js';
@@ -35,12 +35,15 @@ export function budgetStatus(db: DB, opts: { cycleKey?: string; memberId?: numbe
   const current = summarizeCycle(txs, cycle);
   const past = recentCycles(cycle.start, 4, startDay).slice(0, -1).map(c => summarizeCycle(txs, c));
 
+  // a range of cycles ("2026-07..2026-10"): the budgets in force in its last cycle, times the number of cycles
+  const months = cycleCount(cycle.key);
+  const budgetKey = cycle.key.split('..').pop()!;
   const budgets = db.prepare(`
     SELECT b.* FROM budgets b
     WHERE b.effective_from <= ? AND b.member_id IS ?
       AND b.effective_from = (SELECT MAX(effective_from) FROM budgets b2
         WHERE b2.category_id = b.category_id AND b2.member_id IS b.member_id AND b2.effective_from <= ?)
-  `).all(cycle.key, opts.memberId ?? null, cycle.key) as
+  `).all(budgetKey, opts.memberId ?? null, budgetKey) as
     { id: number; category_id: number; member_id: number | null; monthly_amount: number }[];
 
   const categories = db.prepare(`SELECT id, name, parent_id FROM categories WHERE kind = 'expense'`).all() as { id: number; name: string; parent_id: number | null }[];
@@ -61,12 +64,12 @@ export function budgetStatus(db: DB, opts: { cycleKey?: string; memberId?: numbe
   return categories.map(cat => {
     const spent = sumOf(current.byCategory, cat.id);
     const b = budgets.find(x => x.category_id === cat.id);
-    const typical = round(median(past.map(p => sumOf(p.byCategory, cat.id).spend)));
+    const typical = round(median(past.map(p => sumOf(p.byCategory, cat.id).spend)) * months);
     const spentAmount = round(spent.spend);
     // fixed costs don't grow linearly through the month, so only extrapolate the dynamic part
     const plannedAmount = round(plannedIn(cat.id));
     const projected = round((isCurrent ? spent.fixed + spent.dynamic / elapsed : spentAmount) + plannedAmount);
-    const budget = b?.monthly_amount ?? null;
+    const budget = b ? round(b.monthly_amount * months) : null;
     const pct = budget ? round((spentAmount / budget) * 100, 0) : null;
     return {
       budgetId: b?.id ?? null,

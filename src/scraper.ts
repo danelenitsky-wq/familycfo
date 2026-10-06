@@ -50,6 +50,8 @@ export interface ScrapeHooks {
   /** asked when the bank shows its OTP screen; defaults to the terminal. '' gives up */
   requestOtp?: (company: string) => Promise<string>;
   onProgress?: (event: ScrapeProgress) => void;
+  /** how many months back to fetch (the UI's choice); SCRAPE_FROM still wins, the default is 3 */
+  monthsBack?: number;
 }
 export type ScrapeProgress =
   | { type: 'start'; company: string }
@@ -142,7 +144,7 @@ export async function scrapeAll(config: Config, db: DB = getDb(), hooks: ScrapeH
   // SCRAPE_FROM=2026-01-01 fetches from that date (backfill); otherwise the last 3 months
   const startDate = process.env.SCRAPE_FROM ? new Date(`${process.env.SCRAPE_FROM}T00:00:00`) : new Date();
   if (Number.isNaN(startDate.getTime())) throw new Error(`SCRAPE_FROM is not a date: ${process.env.SCRAPE_FROM}`);
-  if (!process.env.SCRAPE_FROM) startDate.setMonth(startDate.getMonth() - 3);
+  if (!process.env.SCRAPE_FROM) startDate.setMonth(startDate.getMonth() - (hooks.monthsBack ?? 3));
 
   // SCRAPE_ONLY=visaCal,leumi limits the run to those companies
   const only = process.env.SCRAPE_ONLY?.split(',').map(s => s.trim()).filter(Boolean);

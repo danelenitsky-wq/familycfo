@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Circle, KeyRound, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { Check, Circle, FileUp, KeyRound, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api, type ScrapeJob } from '../api';
 import { Popover, PopoverContent, PopoverTrigger } from './kit/popover';
+import { Modal } from './ui';
+import { PERIOD_OPTIONS, useMeta, usePeriod } from '../state';
 import { cn } from '@/lib/utils';
 
 export const COMPANY_LABELS: Record<string, string> = {
@@ -28,6 +31,21 @@ export function ScrapeButton() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState('');
+  // asking how many months back to fetch before a scrape starts
+  const [choosing, setChoosing] = useState(false);
+  const period = usePeriod();
+  // whose data to update: null = everyone
+  const [whose, setWhose] = useState<number | null>(null);
+  const { data: meta } = useMeta();
+  const logins = useQuery({ queryKey: ['setup-logins'], enabled: choosing,
+    queryFn: () => api.get<{ logins: { companyId: string; ownerMemberId: number | null; filled: Record<string, boolean> }[] }>('/setup/logins') });
+  const SHARED = 3;
+  const people = (meta?.members ?? []).filter(m => m.id !== SHARED);
+  const chosen = whose == null ? (meta?.members ?? []).map(m => m.id) : [whose];
+  const connected = (logins.data?.logins ?? []).filter(l => Object.values(l.filled).every(Boolean) && chosen.includes(l.ownerMemberId ?? SHARED));
+  // accounts of the chosen people that no direct login of theirs covers: they come from uploaded files
+  const uploaded = (meta?.accounts ?? []).filter(a => (a.kind === 'bank' || a.kind === 'card') && chosen.includes(a.ownerMemberId ?? SHARED)
+    && !connected.some(l => l.companyId === a.company && (l.ownerMemberId ?? SHARED) === (a.ownerMemberId ?? SHARED)));
   const job = useQuery({
     queryKey: ['scrape'],
     queryFn: () => api.get<ScrapeJob>('/scrape'),
@@ -37,8 +55,11 @@ export function ScrapeButton() {
   const running = active(data?.status);
 
   const start = useMutation({
-    mutationFn: () => api.post<ScrapeJob>('/scrape', {}),
-    onSuccess: () => { setOpen(true); qc.invalidateQueries({ queryKey: ['scrape'] }); },
+    mutationFn: (months: number) => api.post<ScrapeJob>('/scrape', { months, memberIds: whose == null ? undefined : [whose] }),
+    onSuccess: () => {
+      setChoosing(false); setOpen(true); period.setSelected(null);
+      qc.invalidateQueries({ queryKey: ['scrape'] }); qc.invalidateQueries({ queryKey: ['meta'] });
+    },
   });
   const sendOtp = useMutation({
     mutationFn: () => api.post('/scrape/otp', { code }),
@@ -60,10 +81,50 @@ export function ScrapeButton() {
 
   return (
     <div className="flex flex-col items-end gap-1">
+      {choosing && (
+        <Modal title="עדכון נתונים" onClose={() => setChoosing(false)}>
+          <div className="mb-2 text-sm font-semibold">של מי לעדכן?</div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {people.map(m => (
+              <button key={m.id} type="button" className={cn('btn', whose === m.id && 'btn-primary')} onClick={() => setWhose(m.id)}>{m.name}</button>
+            ))}
+            <button type="button" className={cn('btn', whose == null && 'btn-primary')} onClick={() => setWhose(null)}>
+              {people.length === 2 ? `${people[0].name} ו${people[1].name}` : 'כולם'}
+            </button>
+          </div>
+          {logins.data && (
+            <div className="mb-4 space-y-2 text-sm">
+              {connected.length > 0
+                ? <p>בחיבור ישיר: {[...new Set(connected.map(l => companyName(l.companyId)))].join(', ')}</p>
+                : <p className="text-amber-700 dark:text-amber-400">אין חשבונות בחיבור ישיר למי שנבחר — את הנתונים מעדכנים בהעלאת קובץ.
+                    {uploaded.length === 0 && <> <Link to="/import" className="underline" onClick={() => setChoosing(false)}>להעלאת קובץ</Link></>}</p>}
+              {uploaded.length > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50/60 p-2.5 dark:bg-amber-500/10">
+                  <div>חשבונות שמתעדכנים בהעלאת קובץ (הכפתור לא יכול להוריד אותם מהבנק):</div>
+                  <div className="mt-1 text-muted-foreground">{uploaded.map(a => a.displayName ?? a.id).join(' · ')}</div>
+                  <Link to="/import" className="btn mt-2" onClick={() => setChoosing(false)}><FileUp />להעלאת קובץ חדש</Link>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="mb-2 text-sm font-semibold">לכמה זמן אחורה?</div>
+          <div className="grid grid-cols-2 gap-2">
+            {PERIOD_OPTIONS.map(o => (
+              <button key={o.months} type="button" disabled={start.isPending || (!!logins.data && connected.length === 0)}
+                className={cn('btn h-14 justify-center text-base', o.months === period.months && 'btn-primary')}
+                onClick={() => start.mutate(o.months)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">זו גם התקופה שתוצג בכל המסכים. אחר כך אפשר לבחור למעלה חודש מסוים או את כל התקופה ביחד.</p>
+          {start.error && <p className="mt-2 text-sm text-red-600">{(start.error as Error).message}</p>}
+        </Modal>
+      )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button type="button" className={cn('btn', data?.otp ? 'border-amber-400 text-amber-700 dark:text-amber-300 animate-pulse' : !running && 'btn-primary')}
-            onClick={e => { if (!running && !data?.otp) { e.preventDefault(); start.mutate(); } }}
+            onClick={e => { if (!running && !data?.otp) { e.preventDefault(); setChoosing(true); } }}
             disabled={start.isPending}>
             {data?.otp ? <KeyRound /> : <RefreshCw className={cn(running && 'animate-spin')} />}
             {label}
