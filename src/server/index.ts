@@ -11,6 +11,7 @@ import { pensionRoutes } from './routes/pension.js';
 import { investmentRoutes } from './routes/investments.js';
 import { setupRoutes } from './routes/setup.js';
 import { importRoutes } from './routes/import.js';
+import { pensionImportRoutes } from './routes/pensionImport.js';
 import { setRate } from '../analytics/fx.js';
 
 const db = getDb();
@@ -83,6 +84,7 @@ pensionRoutes(app, db);
 investmentRoutes(app, db);
 setupRoutes(app, db);
 importRoutes(app, db);
+pensionImportRoutes(app, db);
 
 app.setErrorHandler((err: Error & { statusCode?: number }, _req, reply) => {
   app.log.error(err);

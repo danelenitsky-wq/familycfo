@@ -651,6 +651,14 @@ export const migrations: Migration[] = [
       )`);
     },
   },
+  {
+    version: 16,
+    name: 'pension report original file name',
+    up(db) {
+      // the file name as the user picked it (file_path is the stored copy under data/reports/)
+      db.exec(`ALTER TABLE pension_reports ADD COLUMN original_name TEXT`);
+    },
+  },
 ];
 
 type CategoryKind = 'expense' | 'income' | 'transfer' | 'card_payment' | 'savings';

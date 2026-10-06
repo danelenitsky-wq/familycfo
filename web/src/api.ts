@@ -217,6 +217,7 @@ export interface PensionReportSummary {
 export interface PensionOverview {
   products: PensionProduct[];
   report: { id: number; asOf: string; source: string; memberId: number | null; documentPath: string | null; summary: PensionReportSummary } | null;
+  reports: { id: number; asOf: string; source: string; memberId: number | null; importedAt: string; fileName: string | null; totalSavings: number | null }[];
   totals: {
     value: number; byType: Record<string, number>; monthlyDeposits: number; expectedAnnuity: number; active: number;
     inactive: { count: number; value: number }; liquidStudyFunds: { count: number; value: number };

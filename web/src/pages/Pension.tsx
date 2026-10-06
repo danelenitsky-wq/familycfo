@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Banknote, CalendarClock, ChartPie, Globe, GraduationCap, HandCoins, Info, Landmark, PiggyBank, ShieldCheck, Sparkles, Umbrella, Vault,
+  Banknote, CalendarClock, ChartPie, FileText, FileUp, Globe, GraduationCap, HandCoins, Info, Landmark, PiggyBank, ShieldCheck, Sparkles, Umbrella, Vault,
 } from 'lucide-react';
 import { api, type PensionOverview, type PensionProduct } from '../api';
+import { useLookups } from '../state';
 import { day, fullDate, monthName, todayIso } from '../format';
 import { Empty, ErrorBox, Loading, MemberBadge, Modal, Money, PageHeader, Progress, SectionTitle, Stat } from '../components/ui';
 import { DonutChart, StackedColumns } from '../components/charts';
 import { askAgent } from '../components/AgentChat';
+import { PensionImport } from '../components/PensionImport';
 import { cn } from '@/lib/utils';
 
 const TYPE_LABELS: Record<PensionProduct['type'], string> = { pension: 'פנסיה וביטוח מנהלים', keren_hishtalmut: 'קרנות השתלמות', kupat_gemel: 'קופות גמל' };
@@ -32,6 +34,9 @@ const yearlyFees = (p: PensionProduct) =>
 export default function Pension() {
   const { data, isLoading, error } = useQuery({ queryKey: ['pension'], queryFn: () => api.get<PensionOverview>('/pension') });
   const [open, setOpen] = useState<PensionProduct | null>(null);
+  const [importing, setImporting] = useState(false);
+  const importButton = <button type="button" className="btn btn-primary" onClick={() => setImporting(true)}><FileUp />ייבוא דוח</button>;
+  const importModal = importing && <PensionImport onClose={() => setImporting(false)} />;
 
   if (isLoading) return <Loading />;
   if (error || !data) return <ErrorBox error={error} />;
@@ -41,8 +46,10 @@ export default function Pension() {
   if (!products.length) {
     return (
       <>
-        <PageHeader title="פנסיה וגמל" icon={Umbrella} />
-        <Empty>עוד אין נתוני פנסיה. אפשר לייבא דוח תקופתי מהסוכן או מהמסלקה הפנסיונית (npm run import:pension).</Empty>
+        <PageHeader title="פנסיה וגמל" icon={Umbrella} actions={importButton} />
+        <Empty>עוד אין נתוני פנסיה. לחצו ״ייבוא דוח״ כדי לייבא דוח תקופתי מהסוכן או מהמסלקה הפנסיונית (PDF, Excel או XML).</Empty>
+        {data.reports.length > 0 && <ImportedReports reports={data.reports} />}
+        {importModal}
       </>
     );
   }
@@ -58,7 +65,11 @@ export default function Pension() {
     <>
       <PageHeader title="פנסיה וגמל" icon={Umbrella}
         subtitle={report ? <>נכון ל-{fullDate(report.asOf)} · {report.source}{s?.agent && <> · הסוכן: {s.agent.name} {s.agent.phone}</>}</> : undefined}
-        actions={<button type="button" className="btn" onClick={() => askAgent('תן לי סקירה של הפנסיה, קרנות ההשתלמות וקופות הגמל שלי', true)}><Sparkles />סקירה עם העוזר</button>} />
+        actions={<>
+          <button type="button" className="btn" onClick={() => askAgent('תן לי סקירה של הפנסיה, קרנות ההשתלמות וקופות הגמל שלי', true)}><Sparkles />סקירה עם העוזר</button>
+          {importButton}
+        </>} />
+      {importModal}
 
       <div className="grid grid-cols-2 gap-3 max-[22.5rem]:grid-cols-1 md:gap-4 lg:grid-cols-4">
         <Stat index={0} icon={PiggyBank} label="סך החיסכון" value={totals.value}
@@ -172,6 +183,7 @@ export default function Pension() {
       </div>
 
       {open && <ProductDetails product={open} onClose={() => setOpen(null)} />}
+      <ImportedReports reports={data.reports} />
     </>
   );
 }
@@ -270,6 +282,32 @@ function Fact({ label, value, sub }: { label: string; value: React.ReactNode; su
       <div className="text-xs text-fg-subtle">{label}</div>
       <div className="mt-0.5 font-semibold">{value}</div>
       {sub && <div className="text-xs text-fg-subtle">{sub}</div>}
+    </div>
+  );
+}
+
+/** Every report imported so far: whose, as of when, from where, the file, and when it was imported. */
+function ImportedReports({ reports }: { reports: PensionOverview['reports'] }) {
+  const { member } = useLookups();
+  if (!reports.length) return null;
+  return (
+    <div className="card mt-4">
+      <SectionTitle icon={FileText}>דוחות שיובאו</SectionTitle>
+      <div className="scroll-x card-bleed"><table className="table">
+        <thead><tr><th>נכון ל-</th><th>של מי</th><th>מקור</th><th>קובץ</th><th className="text-end">סה״כ חיסכון</th><th>יובא</th></tr></thead>
+        <tbody>
+          {reports.map(r => (
+            <tr key={r.id}>
+              <td className="whitespace-nowrap">{fullDate(r.asOf)}</td>
+              <td>{r.memberId != null ? member(r.memberId)?.name ?? '—' : '—'}</td>
+              <td>{r.source}</td>
+              <td className="text-xs">{r.fileName ?? '—'}</td>
+              <td className="text-end">{r.totalSavings != null ? <Money value={r.totalSavings} /> : '—'}</td>
+              <td className="whitespace-nowrap text-xs text-muted-foreground">{r.importedAt ? new Date(`${r.importedAt.replace(' ', 'T')}Z`).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
     </div>
   );
 }
