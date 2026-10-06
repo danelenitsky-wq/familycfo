@@ -72,7 +72,7 @@ export default function Transactions() {
   const [showCategories, setShowCategories] = useState(false);
   // hand-entered rows (cash, paid by someone else…): null = closed, 'new' = adding, a row = editing it
   const [manual, setManual] = useState<Tx | 'new' | null>(null);
-  const [suggestRule, setSuggestRule] = useState<{ tx: Tx; patch: Record<string, unknown>; count: number } | null>(null);
+  const [suggestRule, setSuggestRule] = useState<{ tx: Tx; patch: Record<string, unknown>; count: number; sameAmount?: boolean } | null>(null);
 
   const query = { ...params, cycle: review ? undefined : cycle || undefined, search, category, account, kind, review: review ? 1 : undefined, charge: charge ?? undefined, hideCardPayments: hideCardPayments ? 1 : undefined, limit: 1000 };
   const { data, isLoading, error } = useQuery({ queryKey: ['transactions', query], queryFn: () => api.get<TxPage>(`/transactions${qs(query)}`) });
@@ -92,9 +92,9 @@ export default function Transactions() {
       invalidate();
       // offer "apply to all similar" for category / business / member edits
       if ('categoryId' in body || 'businessId' in body || 'memberId' in body) {
-        const similar = await api.get<{ count: number }>(`/transactions/${id}/similar`);
+        const similar = await api.get<{ count: number; sameAmount?: boolean }>(`/transactions/${id}/similar`);
         const tx = data?.rows.find(r => r.id === id);
-        if (similar.count > 0 && tx) setSuggestRule({ tx, patch: body, count: similar.count });
+        if (similar.count > 0 && tx) setSuggestRule({ tx, patch: body, count: similar.count, sameAmount: similar.sameAmount });
       }
     },
   });
@@ -340,7 +340,9 @@ export default function Transactions() {
           </button>
         </>}>
           <p className="text-sm">
-            יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b>. אפשר ליצור כלל שיחול עליהן וגם על תנועות חדשות מאותו בית עסק.
+            {suggestRule.sameAmount
+              ? <>יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b> באותו סכום (<Money value={Math.abs(suggestRule.tx.amount)} />). הכלל יחול רק על העברות בסכום הזה — העברות בסכומים אחרים לא ישתנו.</>
+              : <>יש עוד {suggestRule.count} תנועות של <b>{suggestRule.tx.description}</b>. אפשר ליצור כלל שיחול עליהן וגם על תנועות חדשות מאותו בית עסק.</>}
             תנועות ששינית ידנית לא ישתנו.
           </p>
         </Modal>

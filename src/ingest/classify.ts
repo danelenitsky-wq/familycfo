@@ -9,6 +9,13 @@ const WORD_END = `(?=$|[\\s\\-–'"״׳])`;
 export const CARD_PAYMENT_PATTERN = new RegExp(
   `^(ויזה|כאל|ישראכרט|מקס|לאומי קארד|לאומיקארד|לאומי מאסטרקרד|מאסטרקרד|אמריקן אקספרס|דיינרס|max|visa|isracard|cal)${WORD_END}`, 'i');
 
+/**
+ * Transfers whose description says nothing about what they are for ("העברה דיגיטל", "העברה ב-BIT"):
+ * learning a category from one of them applies only to transfers of the same amount.
+ */
+export const GENERIC_TRANSFER_PATTERN = /^(העברה|העב['׳]|ביט|bit|פייבוקס|paybox|pepper pay)/i;
+export const isGenericTransfer = (description: string) => GENERIC_TRANSFER_PATTERN.test(description.trim());
+
 /** Standing orders into savings plans / deposits. */
 export const SAVINGS_PATTERN = /לחיסכון|לחסכון|פיקדון|פקדון|קופת גמל|השקעה ב/;
 
@@ -117,6 +124,13 @@ export async function categorizeTransactions(db: DB, txIds: number[], apiUrl?: s
     ORDER BY CASE category_source WHEN 'manual' THEN 0 WHEN 'rule' THEN 1 ELSE 2 END, id DESC
     LIMIT 1
   `).pluck();
+  // a generic transfer only learns from a transfer of the same amount
+  const cacheSameAmount = db.prepare(`
+    SELECT category_id FROM transactions
+    WHERE description = ? AND ABS(charged_amount) = ABS(?) AND category_id IS NOT NULL AND id != ?
+    ORDER BY CASE category_source WHEN 'manual' THEN 0 WHEN 'rule' THEN 1 ELSE 2 END, id DESC
+    LIMIT 1
+  `).pluck();
   const set = db.prepare(`UPDATE transactions SET category_id = ?, category_source = ? WHERE id = ?`);
   const apiCache = new Map<string, number | null>();
 
@@ -124,7 +138,8 @@ export async function categorizeTransactions(db: DB, txIds: number[], apiUrl?: s
     const tx = db.prepare(`SELECT * FROM transactions WHERE id = ?`).get(id) as TxRow | undefined;
     if (!tx || tx.category_id != null) continue;
 
-    const cached = cache.get(tx.description, tx.id) as number | undefined;
+    const cached = (isGenericTransfer(tx.description)
+      ? cacheSameAmount.get(tx.description, tx.charged_amount, tx.id) : cache.get(tx.description, tx.id)) as number | undefined;
     if (cached) { set.run(cached, 'cache', tx.id); continue; }
 
     const fromScraper = tx.source_category ? findCategory(db, tx.source_category) : undefined;

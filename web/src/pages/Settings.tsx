@@ -116,7 +116,7 @@ export default function Settings() {
             <tbody>
               {rules.data!.map(r => (
                 <tr key={r.id}>
-                  <td>{r.matchType === 'exact' ? 'שווה ל' : 'מכיל'} <b>{r.pattern}</b></td>
+                  <td>{r.matchType === 'exact' ? 'שווה ל' : 'מכיל'} <b>{r.pattern}</b>{r.minAmount != null && r.minAmount === r.maxAmount && <> · רק בסכום <b className="num">{r.minAmount.toLocaleString('he-IL')} ₪</b></>}</td>
                   <td>{category(r.setCategoryId)?.name ?? '—'}</td>
                   <td>{meta.businesses.find(b => b.id === r.setBusinessId)?.name ?? '—'}{r.setBusinessSharePct && r.setBusinessSharePct !== 100 ? ` (${r.setBusinessSharePct}%)` : ''}</td>
                   <td>{meta.members.find(m => m.id === r.setMemberId)?.name ?? '—'}</td>

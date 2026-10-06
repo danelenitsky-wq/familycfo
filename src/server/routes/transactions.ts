@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { DB } from '../../db/connection.js';
 import { cycleByKey, cycleStartDay, filterTx, incomeOf, loadTransactions, merchantKey, NON_SPEND_KINDS, refundOf, spendOf, type Tx } from '../../analytics/common.js';
-import { applyRules, deriveKinds } from '../../ingest/classify.js';
+import { applyRules, deriveKinds, isGenericTransfer } from '../../ingest/classify.js';
 import { localDate } from '../../ingest/normalize.js';
 import { pickColumns, toApi } from '../crud.js';
 import { MANUAL_ACCOUNT_ID } from '../../db/migrations.js';
@@ -310,8 +310,10 @@ export function transactionRoutes(app: FastifyInstance, db: DB): void {
     const all = loadTransactions(db, { includeExcluded: true });
     const tx = all.find(t => t.id === id);
     if (!tx) return { merchant: null, count: 0, ids: [] };
-    const similar = all.filter(t => t.id !== id && t.merchant === tx.merchant);
-    return { merchant: tx.merchant, pattern: tx.description, count: similar.length, ids: similar.map(t => t.id) };
+    // a generic transfer ("העברה דיגיטל") is similar only to transfers of the same amount
+    const sameAmount = isGenericTransfer(tx.description);
+    const similar = all.filter(t => t.id !== id && t.merchant === tx.merchant && (!sameAmount || Math.abs(t.amount) === Math.abs(tx.amount)));
+    return { merchant: tx.merchant, pattern: tx.description, count: similar.length, ids: similar.map(t => t.id), sameAmount, amount: Math.abs(tx.amount) };
   });
 
   // ---- rules ------------------------------------------------------------------------------
@@ -320,10 +322,15 @@ export function transactionRoutes(app: FastifyInstance, db: DB): void {
   app.post('/api/rules', async req => {
     const body = req.body as Record<string, unknown> & { tagIds?: number[]; applyToExisting?: boolean; fromTransactionId?: number };
     let pattern = body.pattern as string | undefined;
-    // from a transaction: match its merchant key (drops per-transaction codes)
+    // from a transaction: match its merchant key (drops per-transaction codes) — and for a generic
+    // transfer ("העברה דיגיטל") only transfers of exactly the same amount
     if (!pattern && body.fromTransactionId) {
-      const desc = db.prepare(`SELECT description FROM transactions WHERE id = ?`).pluck().get(body.fromTransactionId) as string;
-      pattern = merchantKey(desc);
+      const from = db.prepare(`SELECT description, charged_amount FROM transactions WHERE id = ?`).get(body.fromTransactionId) as { description: string; charged_amount: number };
+      pattern = merchantKey(from.description);
+      if (isGenericTransfer(from.description)) {
+        body.matchType = 'exact';
+        body.minAmount = body.maxAmount = Math.abs(from.charged_amount);
+      }
     }
     const values = {
       match_type: body.matchType ?? 'contains',
